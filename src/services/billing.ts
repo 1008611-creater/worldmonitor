@@ -10,7 +10,7 @@
  */
 
 import { enqueueSentryCall } from '@/bootstrap/sentry-defer';
-import { getConvexClient, getConvexApi } from './convex-client';
+import { getConvexClient, getConvexApi, waitForConvexAuth } from './convex-client';
 import { extractBillingErrorKind } from './_billing-error';
 
 export interface SubscriptionInfo {
@@ -18,6 +18,11 @@ export interface SubscriptionInfo {
   // keying. Optional across a mixed frontend/backend deploy; onboarding waits
   // for the updated response instead of persisting a provider billing id.
   activationKey?: string;
+  // Server-derived markerless Pro Activation candidate: this subscription is
+  // in its first billing cycle and has not already presented the flow. The
+  // atomic claim re-checks delivery/API/MCP activation at mount time. Optional
+  // across mixed frontend/backend deploys; missing fails closed.
+  activationOnboardingEligible?: boolean;
   planKey: string;
   displayName: string;
   status: 'active' | 'on_hold' | 'cancelled' | 'expired';
@@ -140,6 +145,46 @@ export function destroySubscriptionWatch(): void {
  */
 export function getSubscription(): SubscriptionInfo | null {
   return currentSubscription;
+}
+
+export type ProActivationClaimOutcome =
+  | 'claimed'
+  | 'not_eligible'
+  | 'already_presented'
+  | 'already_claimed';
+
+/**
+ * Atomically re-check server-side activation state and reserve one markerless
+ * presentation across devices.
+ */
+export async function claimProActivationPresentation(
+  activationKey: string,
+  claimNonce: string,
+): Promise<ProActivationClaimOutcome> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  const result = await client.mutation(
+    (api as any).payments.billing.claimProActivationPresentation,
+    { activationKey, claimNonce },
+  ) as { status: ProActivationClaimOutcome };
+  return result.status;
+}
+
+/** Mark a successful markerless claim as visibly presented. */
+export async function confirmProActivationPresentation(
+  activationKey: string,
+  claimNonce: string,
+): Promise<boolean> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  return await client.mutation(
+    (api as any).payments.billing.confirmProActivationPresentation,
+    { activationKey, claimNonce },
+  ) as boolean;
 }
 
 const DODO_PORTAL_FALLBACK_URL = 'https://customer.dodopayments.com';

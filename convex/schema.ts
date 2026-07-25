@@ -631,6 +631,18 @@ export default defineSchema({
     // "your access ended ~a month ago", so access end is the right clock.
     .index("by_status_currentPeriodEnd", ["status", "currentPeriodEnd"]),
 
+  // Cross-device single-presentation lease for markerless Pro activation.
+  // A short pending claim closes concurrent mount races without permanently
+  // suppressing onboarding when a browser crashes before rendering the flow.
+  proActivationPresentations: defineTable({
+    userId: v.string(),
+    subscriptionId: v.id("subscriptions"),
+    claimNonce: v.string(),
+    claimedAt: v.number(),
+    presentedAt: v.optional(v.number()),
+  })
+    .index("by_subscription", ["subscriptionId"]),
+
   // Dunning/winback send ledger (#4932): one row per email step actually
   // delivered for a given subscription episode. `episodeAt` is the on_hold
   // anchor (dunning steps) or `cancelledAt` (winback), so a later, separate
