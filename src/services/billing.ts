@@ -12,6 +12,7 @@
 import { enqueueSentryCall } from '@/bootstrap/sentry-defer';
 import { getConvexClient, getConvexApi, waitForConvexAuth } from './convex-client';
 import { extractBillingErrorKind } from './_billing-error';
+import type { Id } from '../../convex/_generated/dataModel';
 
 export interface SubscriptionInfo {
   // Opaque Convex subscription-row identity for Pro Activation fire-once
@@ -282,4 +283,66 @@ export async function openBillingPortal(
     }
     return navigate(DODO_PORTAL_FALLBACK_URL);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Business Pro seat management (#4634/#4635)
+// ---------------------------------------------------------------------------
+
+export interface BusinessSeat {
+  grantId: string;
+  inviteeEmail: string;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  createdAt: number;
+  acceptedAt: number | null;
+  expiresAt: number;
+}
+
+export interface ListBusinessSeatsResult {
+  businessSubscriptionId: string | null;
+  ownerDomain: string | null;
+  ownerIsCorporateDomain: boolean;
+  seats: BusinessSeat[];
+}
+
+/** List the caller's Business Pro seats. Only the owner sees their own grants. */
+export async function listBusinessSeats(): Promise<ListBusinessSeatsResult> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) {
+    return { businessSubscriptionId: null, ownerDomain: null, ownerIsCorporateDomain: false, seats: [] };
+  }
+  await waitForConvexAuth();
+  return client.query(api.payments.businessSeats.listSeats, {});
+}
+
+/** Invite up to 4 same-domain teammates to Business Pro seats. */
+export async function inviteBusinessSeats(emails: string[]): Promise<{
+  invited: Array<{ email: string; grantId: string; status: 'created' | 'already_pending' | 'already_accepted' }>;
+}> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  return client.mutation(api.payments.businessSeats.inviteSeats, { emails });
+}
+
+/** Remove a Business Pro seat (owner-only). */
+export async function removeBusinessSeat(
+  grantId: string,
+): Promise<{ ok: true; status: 'revoked' | 'already_inactive' }> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  return client.mutation(api.payments.businessSeats.removeSeat, { grantId: grantId as Id<'businessProGrants'> });
+}
+
+/** Accept a Business Pro seat invite using the token from the email link. */
+export async function acceptBusinessInvite(grantId: string, token: string): Promise<void> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  await client.mutation(api.payments.businessSeats.acceptBusinessInvite, { grantId: grantId as Id<'businessProGrants'>, token });
 }
