@@ -184,7 +184,37 @@ export async function confirmProActivationPresentation(
   await waitForConvexAuth();
   return await client.mutation(
     (api as any).payments.billing.confirmProActivationPresentation,
-    { activationKey, claimNonce },
+    { activationKey, claimNonce, outcomeTrackingVersion: 1 },
+  ) as boolean;
+}
+
+export type ProActivationOutcomeStepId = 'brief' | 'alerts' | 'power';
+
+export interface ProActivationOutcomeSnapshot {
+  confirmedSteps: ProActivationOutcomeStepId[];
+  skippedSteps: ProActivationOutcomeStepId[];
+  failedSteps: ProActivationOutcomeStepId[];
+  revision: number;
+  finalized: boolean;
+}
+
+/**
+ * Persist one monotonic activation-outcome snapshot. The flow keeps this
+ * best-effort and non-blocking, but errors propagate here so its bounded retry
+ * loop can distinguish a transport failure from a server-side rejection.
+ */
+export async function recordProActivationOutcome(
+  activationKey: string,
+  claimNonce: string,
+  outcome: ProActivationOutcomeSnapshot,
+): Promise<boolean> {
+  const client = await getConvexClient();
+  const api = await getConvexApi();
+  if (!client || !api) throw new Error('Convex unavailable');
+  await waitForConvexAuth();
+  return await client.mutation(
+    (api as any).payments.billing.recordProActivationOutcome,
+    { activationKey, claimNonce, ...outcome },
   ) as boolean;
 }
 

@@ -60,6 +60,18 @@ interface CapturedProEvent {
   };
 }
 
+interface CapturedOutcomeCall {
+  activationKey: string;
+  claimNonce: string;
+  outcome: {
+    confirmedSteps: string[];
+    skippedSteps: string[];
+    failedSteps: string[];
+    revision: number;
+    finalized: boolean;
+  };
+}
+
 async function gotoHarness(page: Page): Promise<void> {
   await page.goto('/tests/runtime-harness.html');
 }
@@ -123,6 +135,18 @@ async function readCapturedEvents(page: Page): Promise<CapturedProEvent[]> {
   return page.evaluate(() => (window as unknown as { __proEvents: CapturedProEvent[] }).__proEvents);
 }
 
+async function readCapturedOutcomes(page: Page): Promise<CapturedOutcomeCall[]> {
+  return page.evaluate(
+    () => (window as unknown as { __proOutcomeCalls: CapturedOutcomeCall[] }).__proOutcomeCalls,
+  );
+}
+
+async function readOutcomeAttempts(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __proOutcomeAttempts: number }).__proOutcomeAttempts,
+  );
+}
+
 type ClaimStatus = 'claimed' | 'not_eligible' | 'already_presented' | 'already_claimed';
 
 async function runMarkerlessFlowHarness(
@@ -135,12 +159,19 @@ async function runMarkerlessFlowHarness(
     confirmResult?: boolean;
     confirmFailures?: number;
     neverResolveClaim?: boolean;
+    outcomeAlwaysFails?: boolean;
   },
 ): Promise<{ result: string; claimCalls: number; confirmCalls: number }> {
   return await page.evaluate(async (scenario) => {
     const { initI18n } = await import('/src/services/i18n.ts');
     await initI18n();
     const mod = await import('/src/components/ProActivationInterstitial.ts');
+    const w = window as unknown as {
+      __proOutcomeCalls: CapturedOutcomeCall[];
+      __proOutcomeAttempts: number;
+    };
+    w.__proOutcomeCalls = [];
+    w.__proOutcomeAttempts = 0;
     let ownerChecks = 0;
     let claimCalls = 0;
     let confirmCalls = 0;
@@ -188,6 +219,14 @@ async function runMarkerlessFlowHarness(
           }
           return scenario.confirmResult !== false;
         },
+        recordOutcome: async (activationKey, claimNonce, outcome) => {
+          w.__proOutcomeAttempts += 1;
+          if (scenario.outcomeAlwaysFails) {
+            throw new Error('record outcome transport failed');
+          }
+          w.__proOutcomeCalls.push({ activationKey, claimNonce, outcome });
+          return true;
+        },
         operationTimeoutMs: 20,
       },
     );
@@ -207,6 +246,7 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
     });
     expect(result).toEqual({ result: 'retry', claimCalls: 0, confirmCalls: 0 });
     await expect(page.locator(OVERLAY)).toHaveCount(0);
+    expect(await readCapturedOutcomes(page)).toEqual([]);
   });
 
   test('a stalled claim reaches the controller retry path within its deadline', async ({ page }) => {
@@ -246,6 +286,74 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
     await expect(page.locator(OVERLAY)).toBeVisible();
   });
 
+  test('markerless progress and final exit persist exact lease-bound outcome snapshots', async ({ page }) => {
+    const result = await runMarkerlessFlowHarness(page, { claimStatus: 'claimed' });
+    expect(result).toEqual({ result: 'opened', claimCalls: 1, confirmCalls: 1 });
+
+    await page.locator('.pro-activation-close').click();
+    await expect(page.locator(SUMMARY)).toBeVisible();
+    await page.locator(FINISH_BTN).click();
+
+    await expect.poll(async () => (await readCapturedOutcomes(page)).length).toBe(2);
+    expect(await readCapturedOutcomes(page)).toEqual([
+      {
+        activationKey: 'opaque-subscription',
+        claimNonce: 'tab-nonce',
+        outcome: {
+          confirmedSteps: [],
+          skippedSteps: ['brief', 'power'],
+          failedSteps: [],
+          revision: 1,
+          finalized: false,
+        },
+      },
+      {
+        activationKey: 'opaque-subscription',
+        claimNonce: 'tab-nonce',
+        outcome: {
+          confirmedSteps: [],
+          skippedSteps: ['brief', 'power'],
+          failedSteps: [],
+          revision: 2,
+          finalized: true,
+        },
+      },
+    ]);
+  });
+
+  test('outcome-write retries exhaust and give up without blocking the flow', async ({ page }) => {
+    // persistActivationOutcomeWithRetry doesn't distinguish transport errors
+    // from permanent rejections -- every failure gets the same bounded
+    // retry-then-give-up treatment (OUTCOME_WRITE_RETRY_DELAYS_MS = [250, 750]).
+    // This locks in that give-up behavior: no test previously exercised a
+    // recordOutcome call that fails every attempt.
+    const opened = await runMarkerlessFlowHarness(page, {
+      claimStatus: 'claimed',
+      outcomeAlwaysFails: true,
+    });
+    expect(opened.result).toBe('opened');
+
+    // finalizeAndShowSummary fires exactly one recordProgress() call
+    // (revision 1, finalized: false).
+    await page.locator('.pro-activation-close').click();
+    await expect(page.locator(SUMMARY)).toBeVisible();
+
+    // 1 initial attempt + 2 scheduled retries = 3 attempts, then the
+    // fire-and-forget loop gives up (console.warn) instead of retrying
+    // forever or throwing an unhandled rejection.
+    await expect.poll(() => readOutcomeAttempts(page), { timeout: 5_000 }).toBe(3);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await readOutcomeAttempts(page)).toBe(3);
+
+    // Every attempt failed, so nothing was ever durably captured.
+    expect(await readCapturedOutcomes(page)).toEqual([]);
+
+    // The best-effort write failing never blocks the UI: the summary is
+    // still interactive and finishing closes normally.
+    await page.locator(FINISH_BTN).click();
+    await expect(page.locator(OVERLAY)).toHaveCount(0);
+  });
+
   test('lost confirmation ownership closes the flow and remains retryable', async ({ page }) => {
     const result = await runMarkerlessFlowHarness(page, {
       claimStatus: 'claimed',
@@ -276,6 +384,97 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
     await expect(page.locator(OVERLAY)).toHaveCount(0);
   });
 
+  test('interstitial stays unmounted while confirmation is pending, so a lost claim cannot leave a stray outcome write', async ({ page }) => {
+    // Regression test for a presentedAt race (review of #5584/#5590):
+    // openProActivationFlow used to open the interstitial (wiring
+    // onProgress/onExit to recordProActivationOutcome) BEFORE awaiting
+    // confirmPresentationWithRetry. If a step got interacted with in that
+    // window and confirm then failed, recordProActivationOutcome's own
+    // presentedAt backfill had already fired, permanently blocking a
+    // legitimate re-claim via claimProActivationPresentation's
+    // already_presented check -- even though the server never acknowledged
+    // this presentation. The interstitial must not exist (and therefore
+    // cannot record an outcome) until confirm actually succeeds.
+    await page.evaluate(async () => {
+      const { initI18n } = await import('/src/services/i18n.ts');
+      await initI18n();
+      const mod = await import('/src/components/ProActivationInterstitial.ts');
+      const w = window as unknown as {
+        __resolveProConfirm?: (ok: boolean) => void;
+        __flowResult?: Promise<string>;
+        __proOutcomeCalls: CapturedOutcomeCall[];
+      };
+      w.__proOutcomeCalls = [];
+      const context = {
+        config: {
+          hasVerifiedEmailChannel: false,
+          hasEmailDelivery: false,
+          hasEnabledDigestRule: false,
+          hasTunedDigestHour: false,
+          hasWebPushChannel: false,
+          hasWebPushDelivery: false,
+          hasUsedPowerFeature: false,
+        },
+        capabilities: { webPushSupported: false },
+        channels: [],
+        channelsKnown: true,
+        hasEnabledRule: false,
+      };
+      // Deliberately never resolves on its own -- held open so the test can
+      // assert on interstitial state while confirm is genuinely in flight,
+      // then resolve it explicitly to drive the failure path.
+      w.__flowResult = mod.openProActivationFlow(
+        {
+          accountUserId: 'markerless-user',
+          accountEmail: 'markerless@worldmonitor.app',
+          onlyIfUnactivated: true,
+          expectedActivationKey: 'opaque-subscription',
+          activationClaimNonce: 'tab-nonce',
+          isAccountCurrent: () => true,
+        },
+        {
+          readContext: async () => context,
+          claimPresentation: async () => 'claimed',
+          confirmPresentation: () =>
+            new Promise<boolean>((resolve) => {
+              w.__resolveProConfirm = resolve;
+            }),
+          recordOutcome: async (activationKey, claimNonce, outcome) => {
+            w.__proOutcomeCalls.push({ activationKey, claimNonce, outcome });
+            return true;
+          },
+          // Large enough that withTimeout never races the manual resolve below.
+          operationTimeoutMs: 20_000,
+        },
+      );
+    });
+
+    // Confirm is still pending: the interstitial must not be mounted, so
+    // there is no onProgress/onConfirmStep handler a (simulated) click could
+    // reach, and no way for a recordOutcome write to fire yet.
+    await page.waitForTimeout(100);
+    await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+    // Server rejects the claim (lost ownership) -- the real failure mode this
+    // guards against.
+    await page.evaluate(() => {
+      (
+        window as unknown as { __resolveProConfirm?: (ok: boolean) => void }
+      ).__resolveProConfirm?.(false);
+    });
+
+    const result = await page.evaluate(
+      () => (window as unknown as { __flowResult: Promise<string> }).__flowResult,
+    );
+    expect(result).toBe('retry');
+    await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+    const outcomeCalls = await page.evaluate(
+      () => (window as unknown as { __proOutcomeCalls: CapturedOutcomeCall[] }).__proOutcomeCalls,
+    );
+    expect(outcomeCalls).toEqual([]);
+  });
+
   test('account switch after claim retries without opening or confirming', async ({ page }) => {
     const result = await runMarkerlessFlowHarness(page, {
       claimStatus: 'claimed',
@@ -283,6 +482,7 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
     });
     expect(result).toEqual({ result: 'retry', claimCalls: 1, confirmCalls: 0 });
     await expect(page.locator(OVERLAY)).toHaveCount(0);
+    expect(await readCapturedOutcomes(page)).toEqual([]);
   });
 });
 

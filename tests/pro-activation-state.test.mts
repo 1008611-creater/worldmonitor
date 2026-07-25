@@ -35,6 +35,7 @@ import {
   buildCriticalAlertsPayload,
   DEFAULT_DIGEST_HOUR,
   buildExitSummary,
+  buildActivationOutcomeBuckets,
   ACTIVATION_FLOW_RETRY_DELAYS_MS,
   activationFlowRetryDelay,
   summarizeActivationExit,
@@ -937,6 +938,48 @@ describe('summarizeActivationExit — funnel exit completion state', () => {
       pending: 0,
       failed: 0,
       total: 0,
+    });
+  });
+});
+
+describe('buildActivationOutcomeBuckets — durable outcome record (#5582)', () => {
+  it('confirmed and done both land in confirmedSteps (both count as verified)', () => {
+    assert.deepEqual(
+      buildActivationOutcomeBuckets([
+        { id: 'brief', outcome: 'confirmed' },
+        { id: 'alerts', outcome: 'done' },
+      ]),
+      { confirmedSteps: ['brief', 'alerts'], skippedSteps: [], failedSteps: [] },
+    );
+  });
+
+  it('skipped and failed bucket separately from confirmed', () => {
+    assert.deepEqual(
+      buildActivationOutcomeBuckets([
+        { id: 'brief', outcome: 'confirmed' },
+        { id: 'alerts', outcome: 'skipped' },
+        { id: 'power', outcome: 'failed' },
+      ]),
+      { confirmedSteps: ['brief'], skippedSteps: ['alerts'], failedSteps: ['power'] },
+    );
+  });
+
+  it('preserves step order within each bucket', () => {
+    assert.deepEqual(
+      buildActivationOutcomeBuckets([
+        { id: 'power', outcome: 'skipped' },
+        { id: 'brief', outcome: 'skipped' },
+        { id: 'alerts', outcome: 'skipped' },
+      ]),
+      { confirmedSteps: [], skippedSteps: ['power', 'brief', 'alerts'], failedSteps: [] },
+    );
+  });
+
+  it('empty flow → all buckets empty', () => {
+    assert.deepEqual(buildActivationOutcomeBuckets([]), {
+      confirmedSteps: [],
+      skippedSteps: [],
+      failedSteps: [],
     });
   });
 });

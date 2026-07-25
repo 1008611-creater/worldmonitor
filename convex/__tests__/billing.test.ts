@@ -5008,6 +5008,11 @@ describe("getSubscriptionForUser activation onboarding eligibility", () => {
       api.payments.billing.confirmProActivationPresentation,
       { activationKey, claimNonce: "device-a" },
     )).toBe(true);
+    const legacyPresentation = await t.run(async (ctx) => await ctx.db
+      .query("proActivationPresentations")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
+      .unique());
+    expect(legacyPresentation?.outcomeTrackingVersion).toBeUndefined();
     const afterConfirmation = await t
       .withIdentity(IDENTITY)
       .query(api.payments.billing.getSubscriptionForUser, {});
@@ -5037,20 +5042,22 @@ describe("getSubscriptionForUser activation onboarding eligibility", () => {
 
     expect(await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.confirmProActivationPresentation,
-      { activationKey, claimNonce: "device-a" },
+      { activationKey, claimNonce: "device-a", outcomeTrackingVersion: 1 },
     )).toBe(true);
-    const firstPresentedAt = (await t.run(async (ctx) => await ctx.db
+    const firstPresentation = await t.run(async (ctx) => await ctx.db
       .query("proActivationPresentations")
       .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
-      .unique()))!.presentedAt;
+      .unique());
+    const firstPresentedAt = firstPresentation!.presentedAt;
     expect(firstPresentedAt).toBeDefined();
+    expect(firstPresentation?.outcomeTrackingVersion).toBe(1);
 
     // A retried confirm call (e.g. a client that timed out but the server
     // call actually succeeded) must still return true and must not clobber
     // the original presentedAt timestamp.
     expect(await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.confirmProActivationPresentation,
-      { activationKey, claimNonce: "device-a" },
+      { activationKey, claimNonce: "device-a", outcomeTrackingVersion: 1 },
     )).toBe(true);
     const secondPresentedAt = (await t.run(async (ctx) => await ctx.db
       .query("proActivationPresentations")
@@ -5207,6 +5214,251 @@ describe("getSubscriptionForUser activation onboarding eligibility", () => {
       .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
       .collect());
     expect(rows).toEqual([]);
+  });
+
+  test("recordProActivationOutcome persists monotonic progress and freezes the finalized outcome", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedSubscription(t, {
+      planKey: "pro_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 30 * DAY_MS,
+      suffix: "activation_outcome",
+    });
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.claimProActivationPresentation,
+      { activationKey, claimNonce: "device-a" },
+    );
+
+    const progressed = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief"],
+        skippedSteps: ["alerts"],
+        failedSteps: ["power"],
+        revision: 1,
+        finalized: false,
+      },
+    );
+    expect(progressed).toBe(true);
+
+    const progressRow = await t.run(async (ctx) => await ctx.db
+      .query("proActivationPresentations")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
+      .unique());
+    expect(progressRow?.presentedAt).toBeTypeOf("number");
+    expect(progressRow?.outcomeTrackingVersion).toBe(1);
+    expect(progressRow?.outcomeRevision).toBe(1);
+    expect(progressRow?.exitedAt).toBeUndefined();
+
+    expect(await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: [],
+        skippedSteps: ["brief", "alerts", "power"],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      },
+    )).toBe(false);
+
+    const afterStaleWrite = await t.run(async (ctx) => await ctx.db
+      .query("proActivationPresentations")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
+      .unique());
+    expect(afterStaleWrite?.confirmedSteps).toEqual(["brief"]);
+    expect(afterStaleWrite?.failedSteps).toEqual(["power"]);
+
+    const before = Date.now();
+    const finalized = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief", "power"],
+        skippedSteps: ["alerts"],
+        failedSteps: [],
+        revision: 2,
+        finalized: true,
+      },
+    );
+    expect(finalized).toBe(true);
+
+    const row = await t.run(async (ctx) => await ctx.db
+      .query("proActivationPresentations")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
+      .unique());
+    expect(row?.confirmedSteps).toEqual(["brief", "power"]);
+    expect(row?.skippedSteps).toEqual(["alerts"]);
+    expect(row?.failedSteps).toEqual([]);
+    expect(row?.outcomeRevision).toBe(2);
+    expect(row?.exitedAt).toBeGreaterThanOrEqual(before);
+
+    expect(await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: [],
+        skippedSteps: ["brief", "alerts", "power"],
+        failedSteps: [],
+        revision: 3,
+        finalized: true,
+      },
+    )).toBe(false);
+  });
+
+  test("recordProActivationOutcome no-ops on a claimNonce mismatch, another user's row, or a never-claimed subscription", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedSubscription(t, {
+      planKey: "pro_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 30 * DAY_MS,
+      suffix: "activation_outcome_guard",
+    });
+
+    // No presentation row exists yet -- never claimed.
+    expect(await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: [],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: true,
+      },
+    )).toBe(false);
+
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.claimProActivationPresentation,
+      { activationKey, claimNonce: "device-a" },
+    );
+
+    // Wrong nonce.
+    expect(await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "wrong-nonce",
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: true,
+      },
+    )).toBe(false);
+
+    // Different user.
+    const otherIdentity = {
+      subject: "user_activation_outcome_other",
+      tokenIdentifier: "clerk|user_activation_outcome_other",
+    };
+    expect(await t.withIdentity(otherIdentity).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: true,
+      },
+    )).toBe(false);
+
+    const row = await t.run(async (ctx) => await ctx.db
+      .query("proActivationPresentations")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", activationKey))
+      .unique());
+    expect(row?.confirmedSteps).toBeUndefined();
+    expect(row?.exitedAt).toBeUndefined();
+  });
+
+  test("recordProActivationOutcome rejects invalid revisions, unknown steps, duplicates, and overlaps", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedSubscription(t, {
+      planKey: "pro_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 30 * DAY_MS,
+      suffix: "activation_outcome_validation",
+    });
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.claimProActivationPresentation,
+      { activationKey, claimNonce: "device-a" },
+    );
+
+    await expect(t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 0,
+        finalized: false,
+      },
+    )).rejects.toThrow(/integer from 1 to 4/);
+
+    await expect(t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 5,
+        finalized: false,
+      },
+    )).rejects.toThrow(/integer from 1 to 4/);
+
+    await expect(t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief"],
+        skippedSteps: ["brief"],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      },
+    )).rejects.toThrow(/disjoint/);
+
+    await expect(t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["brief", "brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      },
+    )).rejects.toThrow(/disjoint/);
+
+    await expect(t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "device-a",
+        confirmedSteps: ["unknown"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      } as never,
+    )).rejects.toThrow();
   });
 
   test("a disabled alert rule with a verified channel stays onboarding-eligible", async () => {

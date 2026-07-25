@@ -1,6 +1,12 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { channelTypeValidator, digestModeValidator, quietHoursOverrideValidator, sensitivityValidator } from "./constants";
+import {
+  channelTypeValidator,
+  digestModeValidator,
+  proActivationStepIdValidator,
+  quietHoursOverrideValidator,
+  sensitivityValidator,
+} from "./constants";
 
 // Subscription status enum — maps Dodo statuses to our internal set
 const subscriptionStatus = v.union(
@@ -634,12 +640,27 @@ export default defineSchema({
   // Cross-device single-presentation lease for markerless Pro activation.
   // A short pending claim closes concurrent mount races without permanently
   // suppressing onboarding when a browser crashes before rendering the flow.
+  //
+  // The outcome buckets mirror ActivationStepOutcome
+  // (pro-activation-state.ts). They are updated as the subscriber acts so a
+  // tab close cannot erase engagement, then frozen when `exitedAt` is set.
+  // `outcomeRevision` rejects late/out-of-order best-effort writes.
   proActivationPresentations: defineTable({
     userId: v.string(),
     subscriptionId: v.id("subscriptions"),
     claimNonce: v.string(),
     claimedAt: v.number(),
     presentedAt: v.optional(v.number()),
+    // Set when a presentation is confirmed by an outcome-aware client. This
+    // excludes rows created before #5582 without losing post-deploy sessions
+    // that abandon the flow before their first progress snapshot.
+    outcomeTrackingVersion: v.optional(v.literal(1)),
+    confirmedSteps: v.optional(v.array(proActivationStepIdValidator)),
+    skippedSteps: v.optional(v.array(proActivationStepIdValidator)),
+    failedSteps: v.optional(v.array(proActivationStepIdValidator)),
+    outcomeRevision: v.optional(v.number()),
+    outcomeUpdatedAt: v.optional(v.number()),
+    exitedAt: v.optional(v.number()),
   })
     .index("by_subscription", ["subscriptionId"]),
 
