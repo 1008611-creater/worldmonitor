@@ -839,6 +839,17 @@ export interface ProActivationFlowOptions {
   expectedActivationKey?: string;
   /** Per-tab nonce used by the server-side cross-device presentation lease. */
   activationClaimNonce?: string;
+  /** Day-0 session start; paired with the nonce for ordered row ownership. */
+  activationSessionStartedAt?: number;
+  /**
+   * Finish-setup chip seam. Invoked when the chip is clicked so each reopen
+   * gets fresh identity instead of replaying the captured flow's revision
+   * namespace.
+   */
+  createDay0SessionIdentity?: () => {
+    activationClaimNonce: string;
+    activationSessionStartedAt: number;
+  };
 }
 
 /** Live activation context read once at flow open: config + platform + fields for the alerts patch. */
@@ -867,7 +878,8 @@ export interface ProActivationFlowDependencies {
   openDay0Presentation: (
     activationKey: string,
     claimNonce: string,
-  ) => Promise<'opened' | 'already_recorded' | 'not_eligible'>;
+    sessionStartedAt: number,
+  ) => Promise<'opened' | 'already_recorded' | 'not_eligible' | 'superseded'>;
   /**
    * Typed against the service's own snapshot rather than a hand-copied shape:
    * the duplicate drifted the moment a bucket was added (#5617), and a stale
@@ -894,6 +906,7 @@ const BRIEF_PREVIEW_TIMEOUT_MS = 2500;
 const ACTIVATION_CONTEXT_TIMEOUT_MS = 5_000;
 const ACTIVATION_MUTATION_TIMEOUT_MS = 5_000;
 const PRESENTATION_CONFIRM_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
+const DAY0_OPEN_RETRY_DELAYS_MS = [250, 750] as const;
 const OUTCOME_WRITE_RETRY_DELAYS_MS = [250, 750] as const;
 
 /**
@@ -1384,6 +1397,41 @@ function reportActivationPersistenceFailure(
     .catch(() => {});
 }
 
+async function openDay0PresentationWithRetry(
+  options: ProActivationFlowOptions,
+  dependencies: ProActivationFlowDependencies,
+): Promise<boolean> {
+  const activationKey = options.expectedActivationKey;
+  const claimNonce = options.activationClaimNonce;
+  const sessionStartedAt = options.activationSessionStartedAt;
+  if (!activationKey || !claimNonce || sessionStartedAt === undefined) return false;
+
+  for (let attempt = 0; ; attempt += 1) {
+    if (!isFlowAccountCurrent(options)) return false;
+    try {
+      const status = await dependencies.openDay0Presentation(
+        activationKey,
+        claimNonce,
+        sessionStartedAt,
+      );
+      // Every server refusal is authoritative and terminal. Only a rejected
+      // request is eligible for transport retry.
+      return status === 'opened';
+    } catch (error) {
+      // A late rejection must not keep retrying or report against an account
+      // that is no longer active in this browser.
+      if (!isFlowAccountCurrent(options)) return false;
+      const delay = DAY0_OPEN_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        console.warn('[pro-activation] failed to open day-0 activation record', error);
+        reportActivationPersistenceFailure(error, 'openDay0Presentation');
+        return false;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+    }
+  }
+}
+
 function persistActivationOutcomeWithRetry(
   options: ProActivationFlowOptions,
   dependencies: ProActivationFlowDependencies,
@@ -1392,8 +1440,8 @@ function persistActivationOutcomeWithRetry(
   finalized: boolean,
   /**
    * Day-0 only: resolves once the row these snapshots attach to exists. `false`
-   * means the server refused it (ineligible, or an earlier session already
-   * finalized), so writing would be rejected anyway — skip quietly.
+   * means the server refused it (ineligible, finalized, or superseded by a
+   * newer session), so writing would be rejected anyway — skip quietly.
    */
   day0RowReady?: Promise<boolean>,
 ): void {
@@ -1533,28 +1581,25 @@ export async function openProActivationFlow(
   // unreachable. The promise is handed to the outcome writer instead, so
   // snapshots queue behind the row they attach to rather than racing it, and
   // a refusal (ineligible / already finalized) silently drops them.
-  const day0OpenRequest =
-    !options.onlyIfUnactivated && options.expectedActivationKey && options.activationClaimNonce
-      ? dependencies.openDay0Presentation(
-          options.expectedActivationKey,
-          options.activationClaimNonce,
-        )
+  const day0RowReady =
+    !options.onlyIfUnactivated &&
+    options.expectedActivationKey &&
+    options.activationClaimNonce &&
+    options.activationSessionStartedAt !== undefined
+      ? openDay0PresentationWithRetry(options, dependencies)
       : undefined;
-  const day0RowReady = day0OpenRequest
-    ?.then((status) => status === 'opened')
-    .catch(() => false);
-  if (day0OpenRequest) {
+  if (day0RowReady) {
     // Observe availability within the normal mutation budget, but keep the raw
-    // promise above as the durable readiness signal. `withTimeout` cannot
-    // cancel its source promise, so a slow successful open can still release
-    // snapshots queued behind it instead of being misclassified as a refusal.
+    // retry promise above as the durable readiness signal. `withTimeout`
+    // cannot cancel its source promise, so a slow successful open can still
+    // release snapshots queued behind it. The timeout is slow/pending
+    // telemetry only; terminal rejection is reported by the retry loop once.
     void withTimeout(
-      day0OpenRequest,
+      day0RowReady,
       dependencies.operationTimeoutMs ?? ACTIVATION_MUTATION_TIMEOUT_MS,
       'activation-open-day0-presentation',
     ).catch((error) => {
-      console.warn('[pro-activation] failed to open day-0 activation record', error);
-      reportActivationPersistenceFailure(error, 'openDay0Presentation');
+      console.warn('[pro-activation] day-0 activation record open is still pending', error);
     });
   }
 

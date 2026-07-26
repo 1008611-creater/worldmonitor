@@ -75,6 +75,12 @@ interface CapturedOutcomeCall {
   };
 }
 
+interface CapturedDay0Open {
+  activationKey: string;
+  claimNonce: string;
+  sessionStartedAt: number;
+}
+
 async function gotoHarness(page: Page): Promise<void> {
   await page.goto('/tests/runtime-harness.html');
 }
@@ -154,6 +160,12 @@ async function readCapturedOutcomes(page: Page): Promise<CapturedOutcomeCall[]> 
 async function readOutcomeAttempts(page: Page): Promise<number> {
   return page.evaluate(
     () => (window as unknown as { __proOutcomeAttempts: number }).__proOutcomeAttempts,
+  );
+}
+
+async function readDay0Opens(page: Page): Promise<CapturedDay0Open[]> {
+  return page.evaluate(
+    () => (window as unknown as { __proDay0Opens: CapturedDay0Open[] }).__proDay0Opens,
   );
 }
 
@@ -501,7 +513,7 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
   });
 });
 
-type Day0Status = 'opened' | 'already_recorded' | 'not_eligible';
+type Day0Status = 'opened' | 'already_recorded' | 'not_eligible' | 'superseded';
 
 /**
  * Drive the REAL day-0 (post-checkout) flow: `onlyIfUnactivated: false`, with
@@ -512,6 +524,7 @@ async function runDay0FlowHarness(
   input: {
     day0Status?: Day0Status;
     day0Throws?: boolean;
+    day0FailuresBeforeSuccess?: number;
     day0NeverResolves?: boolean;
     day0ResolveAfterMs?: number;
   } = {},
@@ -523,9 +536,11 @@ async function runDay0FlowHarness(
     const w = window as unknown as {
       __proOutcomeCalls: CapturedOutcomeCall[];
       __proOutcomeAttempts: number;
+      __proDay0Opens: CapturedDay0Open[];
     };
     w.__proOutcomeCalls = [];
     w.__proOutcomeAttempts = 0;
+    w.__proDay0Opens = [];
     let claimCalls = 0;
     let confirmCalls = 0;
     let day0Calls = 0;
@@ -536,6 +551,7 @@ async function runDay0FlowHarness(
         onlyIfUnactivated: false,
         expectedActivationKey: 'opaque-subscription',
         activationClaimNonce: 'tab-nonce',
+        activationSessionStartedAt: 1_725_000_000_000,
         isAccountCurrent: () => true,
       },
       {
@@ -562,10 +578,16 @@ async function runDay0FlowHarness(
           confirmCalls += 1;
           return true;
         },
-        openDay0Presentation: async () => {
+        openDay0Presentation: async (activationKey, claimNonce, sessionStartedAt) => {
           day0Calls += 1;
+          w.__proDay0Opens.push({ activationKey, claimNonce, sessionStartedAt });
           if (scenario.day0NeverResolves) return await new Promise<never>(() => {});
-          if (scenario.day0Throws) throw new Error('day-0 record transport failed');
+          if (
+            scenario.day0Throws ||
+            day0Calls <= (scenario.day0FailuresBeforeSuccess ?? 0)
+          ) {
+            throw new Error('day-0 record transport failed');
+          }
           if (scenario.day0ResolveAfterMs !== undefined) {
             await new Promise<void>((resolve) => setTimeout(resolve, scenario.day0ResolveAfterMs));
           }
@@ -665,15 +687,39 @@ test.describe('Pro activation flow — day-0 outcome rows (#5621)', () => {
     ]);
   });
 
+  test('rejected opens retry with one identity, then flush queued snapshots after success', async ({ page }) => {
+    const result = await runDay0FlowHarness(page, { day0FailuresBeforeSuccess: 2 });
+    expect(result.result).toBe('opened');
+    await expect(page.locator(OVERLAY)).toBeVisible();
+
+    await page.locator('.pro-activation-close').click();
+    await expect(page.locator(SUMMARY)).toBeVisible();
+    await page.locator(FINISH_BTN).click();
+
+    await expect.poll(async () => (await readDay0Opens(page)).length).toBe(3);
+    expect(await readDay0Opens(page)).toEqual(Array.from({ length: 3 }, () => ({
+      activationKey: 'opaque-subscription',
+      claimNonce: 'tab-nonce',
+      sessionStartedAt: 1_725_000_000_000,
+    })));
+    await expect.poll(async () => (await readCapturedOutcomes(page)).length).toBe(2);
+    expect((await readCapturedOutcomes(page)).map(({ outcome }) => ({
+      revision: outcome.revision,
+      finalized: outcome.finalized,
+    }))).toEqual([
+      { revision: 1, finalized: false },
+      { revision: 2, finalized: true },
+    ]);
+  });
+
   test.describe('a refused or unreachable day-0 record never blocks the welcome flow', () => {
-    for (const [name, scenario] of [
+    for (const [name, day0Status] of [
       ['server refuses (already finalized)', { day0Status: 'already_recorded' as const }],
       ['server refuses (ineligible)', { day0Status: 'not_eligible' as const }],
-      ['transport throws', { day0Throws: true }],
-      ['transport hangs past the deadline', { day0NeverResolves: true }],
+      ['server refuses (superseded)', { day0Status: 'superseded' as const }],
     ] as const) {
       test(name, async ({ page }) => {
-        const result = await runDay0FlowHarness(page, scenario);
+        const result = await runDay0FlowHarness(page, day0Status);
         // Post-checkout onboarding is the product; the ledger is telemetry.
         // It must open regardless, and never return the 'retry' that the
         // markerless path uses when its lease is in doubt.
@@ -685,17 +731,42 @@ test.describe('Pro activation flow — day-0 outcome rows (#5621)', () => {
         await page.locator(FINISH_BTN).click();
         await expect(page.locator(OVERLAY)).toHaveCount(0);
 
-        // Outlast the 200ms observation deadline. A never-resolving readiness
-        // promise stays pending, but neither blocks the UI nor attempts a
-        // write against a row that does not exist.
-        await page.waitForTimeout(400);
-
-        // No row to attach to → snapshots are dropped rather than written
-        // against a row this session does not own.
+        expect((await readDay0Opens(page)).length).toBe(1);
         expect(await readCapturedOutcomes(page)).toEqual([]);
         expect(await readOutcomeAttempts(page)).toBe(0);
       });
     }
+
+    test('permanent transport rejection performs the bounded attempt count', async ({ page }) => {
+      const result = await runDay0FlowHarness(page, { day0Throws: true });
+      expect(result.result).toBe('opened');
+      await expect(page.locator(OVERLAY)).toBeVisible();
+
+      await page.locator('.pro-activation-close').click();
+      await expect(page.locator(SUMMARY)).toBeVisible();
+      await page.locator(FINISH_BTN).click();
+      await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+      await expect.poll(async () => (await readDay0Opens(page)).length).toBe(3);
+      expect(await readCapturedOutcomes(page)).toEqual([]);
+      expect(await readOutcomeAttempts(page)).toBe(0);
+    });
+
+    test('a hung request stays pending without blocking or writing', async ({ page }) => {
+      const result = await runDay0FlowHarness(page, { day0NeverResolves: true });
+      expect(result.result).toBe('opened');
+      await expect(page.locator(OVERLAY)).toBeVisible();
+
+      await page.locator('.pro-activation-close').click();
+      await expect(page.locator(SUMMARY)).toBeVisible();
+      await page.locator(FINISH_BTN).click();
+      await expect(page.locator(OVERLAY)).toHaveCount(0);
+      await page.waitForTimeout(400);
+
+      expect((await readDay0Opens(page)).length).toBe(1);
+      expect(await readCapturedOutcomes(page)).toEqual([]);
+      expect(await readOutcomeAttempts(page)).toBe(0);
+    });
   });
 });
 

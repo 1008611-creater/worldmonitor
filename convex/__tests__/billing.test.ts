@@ -5898,7 +5898,7 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
 
     const opened = await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "day0-tab" },
+      { activationKey, claimNonce: "day0-tab", sessionStartedAt: NOW },
     );
     expect(opened.status).toBe("opened");
 
@@ -5918,7 +5918,7 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
     // Day-0 ran and every step failed — the exact #5600 cohort.
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "day0-tab" },
+      { activationKey, claimNonce: "day0-tab", sessionStartedAt: NOW },
     );
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.recordProActivationOutcome,
@@ -5962,7 +5962,7 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
 
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "day0-tab" },
+      { activationKey, claimNonce: "day0-tab", sessionStartedAt: NOW },
     );
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.claimProActivationPresentation,
@@ -6047,7 +6047,7 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
 
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "first-tab" },
+      { activationKey, claimNonce: "first-tab", sessionStartedAt: NOW },
     );
     await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.recordProActivationOutcome,
@@ -6070,7 +6070,11 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
     vi.setSystemTime(NOW + 1_000);
     const retaken = await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "second-tab" },
+      {
+        activationKey,
+        claimNonce: "second-tab",
+        sessionStartedAt: NOW + 1_000,
+      },
     );
     expect(retaken.status).toBe("opened");
     const retakenRows = await readCohort(t, activationKey, "day0");
@@ -6105,12 +6109,159 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
     // existing record instead of resetting the session that already exited.
     const afterExit = await t.withIdentity(IDENTITY).mutation(
       api.payments.billing.openProActivationDay0Presentation,
-      { activationKey, claimNonce: "third-tab" },
+      {
+        activationKey,
+        claimNonce: "third-tab",
+        sessionStartedAt: NOW + 2_000,
+      },
     );
     expect(afterExit.status).toBe("already_recorded");
     const [row] = await readCohort(t, activationKey, "day0");
     expect(row?.claimNonce).toBe("second-tab");
     expect(row?.confirmedSteps).toEqual(["brief"]);
+  });
+
+  test("an older or legacy delayed open cannot erase a newer session's progress", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedProSubscription(t, "activation_day0_stale_open");
+
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      {
+        activationKey,
+        claimNonce: "newer-tab",
+        sessionStartedAt: NOW + 2_000,
+      },
+    );
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "newer-tab",
+        cohort: "day0" as const,
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        blockedSteps: ["alerts"],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      },
+    );
+
+    // Network delay delivers an older tab's open after the newer owner has
+    // already persisted progress. Arrival order must not reset ownership.
+    const older = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      {
+        activationKey,
+        claimNonce: "older-tab",
+        sessionStartedAt: NOW + 1_000,
+      },
+    );
+    expect(older.status).toBe("superseded");
+
+    // A cached #5626 client has no explicit order. Mixed-deploy order 0 keeps
+    // it below every ordered session even when its nonce wins the tie-break.
+    const legacy = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      { activationKey, claimNonce: "zzzz-legacy-tab" },
+    );
+    expect(legacy.status).toBe("superseded");
+
+    const [row] = await readCohort(t, activationKey, "day0");
+    expect(row?.claimNonce).toBe("newer-tab");
+    expect(row?.sessionStartedAt).toBe(NOW + 2_000);
+    expect(row?.confirmedSteps).toEqual(["brief"]);
+    expect(row?.blockedSteps).toEqual(["alerts"]);
+    expect(row?.outcomeRevision).toBe(1);
+  });
+
+  test("equal-time sessions converge on one deterministic nonce winner", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedProSubscription(t, "activation_day0_equal_time");
+
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      {
+        activationKey,
+        claimNonce: "equal-a",
+        sessionStartedAt: NOW,
+      },
+    );
+    const winner = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      {
+        activationKey,
+        claimNonce: "equal-b",
+        sessionStartedAt: NOW,
+      },
+    );
+    expect(winner.status).toBe("opened");
+
+    const loserReplay = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      {
+        activationKey,
+        claimNonce: "equal-a",
+        sessionStartedAt: NOW,
+      },
+    );
+    expect(loserReplay.status).toBe("superseded");
+
+    const [row] = await readCohort(t, activationKey, "day0");
+    expect(row?.claimNonce).toBe("equal-b");
+    expect(row?.sessionStartedAt).toBe(NOW);
+  });
+
+  test("legacy sessions cannot displace a different unfinished legacy owner", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedProSubscription(t, "activation_day0_legacy_owner");
+
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      { activationKey, claimNonce: "legacy-owner" },
+    );
+    await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.recordProActivationOutcome,
+      {
+        activationKey,
+        claimNonce: "legacy-owner",
+        cohort: "day0" as const,
+        confirmedSteps: ["brief"],
+        skippedSteps: [],
+        failedSteps: [],
+        revision: 1,
+        finalized: false,
+      },
+    );
+
+    const delayed = await t.withIdentity(IDENTITY).mutation(
+      api.payments.billing.openProActivationDay0Presentation,
+      { activationKey, claimNonce: "zzzz-delayed-legacy" },
+    );
+    expect(delayed.status).toBe("superseded");
+
+    const [row] = await readCohort(t, activationKey, "day0");
+    expect(row?.claimNonce).toBe("legacy-owner");
+    expect(row?.confirmedSteps).toEqual(["brief"]);
+    expect(row?.outcomeRevision).toBe(1);
+  });
+
+  test("day-0 session order rejects invalid or implausibly future values", async () => {
+    const t = convexTest(schema, modules);
+    const activationKey = await seedProSubscription(t, "activation_day0_order_validation");
+
+    for (const sessionStartedAt of [0, -1, 1.5, Date.now() + 6 * 60 * 1000]) {
+      await expect(t.withIdentity(IDENTITY).mutation(
+        api.payments.billing.openProActivationDay0Presentation,
+        {
+          activationKey,
+          claimNonce: `invalid-${sessionStartedAt}`,
+          sessionStartedAt,
+        },
+      )).rejects.toThrow(/positive safe integer within the allowed future clock skew/);
+    }
+    expect(await readCohort(t, activationKey, "day0")).toHaveLength(0);
   });
 
   test("day-0 records nothing for another user's or a non-Pro subscription", async () => {
@@ -6134,7 +6285,7 @@ describe("Pro activation — day-0 outcome rows (#5621)", () => {
     for (const activationKey of [foreignKey, apiKey]) {
       const result = await t.withIdentity(IDENTITY).mutation(
         api.payments.billing.openProActivationDay0Presentation,
-        { activationKey, claimNonce: "day0-tab" },
+        { activationKey, claimNonce: "day0-tab", sessionStartedAt: NOW },
       );
       expect(result.status).toBe("not_eligible");
       expect(await readCohort(t, activationKey, "day0")).toHaveLength(0);

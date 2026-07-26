@@ -762,6 +762,7 @@ export const confirmProActivationPresentation = mutation({
 // mutation and schema so their accepted step set cannot drift from this bound.
 const MAX_PRO_ACTIVATION_OUTCOME_REVISION =
   proActivationStepIdValidator.members.length + 2;
+const MAX_PRO_ACTIVATION_SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * Open the day-0 (post-checkout) activation record (#5621).
@@ -775,11 +776,18 @@ const MAX_PRO_ACTIVATION_OUTCOME_REVISION =
  * Ownership moves to the newest session because only one un-finalized day-0
  * row exists per subscription; a session that already exited is frozen and
  * takes precedence over a late re-open (e.g. the finish-setup chip).
+ * Sessions are ordered by their client-captured start time, then by nonce for
+ * a deterministic equal-time tie. That total order prevents an older delayed
+ * request from erasing a newer session's progress and cannot oscillate when
+ * two independent clients start in the same millisecond. During mixed deploys,
+ * a client without sessionStartedAt may create or replay its own row but cannot
+ * displace a different owner; every explicitly ordered session outranks it.
  */
 export const openProActivationDay0Presentation = mutation({
   args: {
     activationKey: v.id("subscriptions"),
     claimNonce: v.string(),
+    sessionStartedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -798,6 +806,19 @@ export const openProActivationDay0Presentation = mutation({
     }
 
     const now = Date.now();
+    if (
+      args.sessionStartedAt !== undefined &&
+      (
+        !Number.isSafeInteger(args.sessionStartedAt) ||
+        args.sessionStartedAt <= 0 ||
+        args.sessionStartedAt > now + MAX_PRO_ACTIVATION_SESSION_FUTURE_SKEW_MS
+      )
+    ) {
+      throw new ConvexError(
+        "activation session start must be a positive safe integer within the allowed future clock skew",
+      );
+    }
+
     const existing = await activationPresentationForCohort(ctx, args.activationKey, "day0");
     if (existing === null) {
       await ctx.db.insert("proActivationPresentations", {
@@ -806,6 +827,9 @@ export const openProActivationDay0Presentation = mutation({
         cohort: "day0",
         claimNonce: args.claimNonce,
         claimedAt: now,
+        ...(args.sessionStartedAt !== undefined
+          ? { sessionStartedAt: args.sessionStartedAt }
+          : {}),
         // Day-0 has no confirm handshake, so presentation is recorded here —
         // before the interstitial renders — to keep a subscriber who closes
         // the tab immediately inside the cohort instead of invisible.
@@ -817,13 +841,57 @@ export const openProActivationDay0Presentation = mutation({
     if (existing.exitedAt !== undefined) {
       return { status: "already_recorded" as const };
     }
+    if (existing.claimNonce === args.claimNonce) {
+      if (
+        existing.sessionStartedAt !== undefined &&
+        args.sessionStartedAt !== undefined &&
+        existing.sessionStartedAt !== args.sessionStartedAt
+      ) {
+        throw new ConvexError(
+          "activation session nonce cannot change its start order",
+        );
+      }
+      // Mixed-deploy compatibility: attach the explicit order to an unfinished
+      // row opened by this same session before the field was deployed.
+      if (
+        existing.sessionStartedAt === undefined &&
+        args.sessionStartedAt !== undefined
+      ) {
+        await ctx.db.patch(existing._id, {
+          sessionStartedAt: args.sessionStartedAt,
+        });
+      }
+      return { status: "opened" as const };
+    }
     if (existing.claimNonce !== args.claimNonce) {
-      // A later session supersedes an abandoned one. Reset the full snapshot
-      // so the new session neither inherits stale classifications nor has its
-      // revisions (which restart at 1) rejected by the monotonic guard below.
+      // A cached client without sessionStartedAt can replay its own nonce (the
+      // branch above) but cannot establish that a different session is newer,
+      // so it must never reset another owner's progress. Any explicit order is
+      // newer than a legacy row; two explicit sessions use nonce only for the
+      // deterministic equal-time tie.
+      const existingOrder = existing.sessionStartedAt;
+      const incomingOrder = args.sessionStartedAt;
+      const incomingIsNewer =
+        incomingOrder !== undefined &&
+        (
+          existingOrder === undefined ||
+          incomingOrder > existingOrder ||
+          (
+            incomingOrder === existingOrder &&
+            args.claimNonce > existing.claimNonce
+          )
+        );
+      if (!incomingIsNewer) {
+        return { status: "superseded" as const };
+      }
+      // A strictly newer session (or the deterministic winner of an equal-time
+      // tie) supersedes an abandoned one. Reset the full snapshot so the new
+      // session neither inherits stale classifications nor has its revisions
+      // (which restart at 1) rejected by the monotonic guard below.
       await ctx.db.patch(existing._id, {
         claimNonce: args.claimNonce,
         claimedAt: now,
+        sessionStartedAt: args.sessionStartedAt,
         presentedAt: now,
         confirmedSteps: undefined,
         skippedSteps: undefined,

@@ -164,6 +164,8 @@ export class ProActivationController implements AppModule {
   private authStateKey: string | null = null;
   private authGeneration = 0;
   private readonly mountNonce = generateMountClaimNonce();
+  private readonly mountSessionStartedAt = Date.now();
+  private lastDay0SessionStartedAt = this.mountSessionStartedAt;
 
   constructor(
     private readonly ctx: AppContext,
@@ -422,7 +424,6 @@ export class ProActivationController implements AppModule {
           ...flowOptions,
           onlyIfUnactivated: false,
           expectedActivationKey: subscriptionKey,
-          activationClaimNonce: generateMountClaimNonce(),
         }),
       )
       .catch((error) => console.warn('[pro-activation] finish-setup chip failed to load', error));
@@ -561,6 +562,7 @@ export class ProActivationController implements AppModule {
         // these undefined and left its cohort invisible in Convex.
         expectedActivationKey: subscriptionKey,
         activationClaimNonce: this.mountNonce,
+        activationSessionStartedAt: this.mountSessionStartedAt,
       });
       // The interstitial may already be rendered by this point (opened
       // synchronously inside openProActivationFlow before it resolves). If
@@ -584,6 +586,14 @@ export class ProActivationController implements AppModule {
     return {
       accountUserId: user.id,
       accountEmail: user.email,
+      createDay0SessionIdentity: () => {
+        const sessionStartedAt = Math.max(Date.now(), this.lastDay0SessionStartedAt + 1);
+        this.lastDay0SessionStartedAt = sessionStartedAt;
+        return {
+          activationClaimNonce: generateMountClaimNonce(),
+          activationSessionStartedAt: sessionStartedAt,
+        };
+      },
       // Pro entitles MCP, not the API plans' keys (#5607). Gate on the feature
       // rather than the plan key: UnifiedSettings hides both the MCP tab and its
       // panel without `mcpAccess`, so deep-linking there would open settings on a

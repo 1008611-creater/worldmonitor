@@ -50,6 +50,8 @@ const stateKeys = [
   '__activationCloseCalls',
   '__activationFlowOptions',
   '__activationChipOptions',
+  '__activationChipClick',
+  '__activationChipReopenOptions',
 ] as const;
 const stateSnapshots = new Map(stateKeys.map((key) => [key, snapshotGlobal(key)]));
 
@@ -119,6 +121,12 @@ async function loadController(): Promise<typeof import('../src/app/pro-activatio
     ['chip-stub', `
       export function maybeShowFinishSetupChip(options) {
         globalThis.__activationChipOptions.push(options);
+        globalThis.__activationChipClick = () => {
+          const identity = options.createDay0SessionIdentity();
+          const reopenedOptions = { ...options, ...identity };
+          globalThis.__activationChipReopenOptions.push(reopenedOptions);
+          return reopenedOptions;
+        };
       }
     `],
   ]);
@@ -201,6 +209,8 @@ function installBrowserState(options: { fastTimers?: boolean } = {}): void {
     __activationCloseCalls: 0,
     __activationFlowOptions: [] as unknown[],
     __activationChipOptions: [] as unknown[],
+    __activationChipClick: null as (() => Record<string, unknown>) | null,
+    __activationChipReopenOptions: [] as unknown[],
   });
 }
 
@@ -699,6 +709,11 @@ describe('ProActivationController activation-record identity (#5621)', () => {
       'day-0 must carry a session nonce so its outcome writes are attributable',
     );
     assert.notEqual(day0.activationClaimNonce, '');
+    assert.equal(
+      typeof day0.activationSessionStartedAt,
+      'number',
+      'day-0 must carry a comparable session-start order',
+    );
   });
 
   it('still hands the markerless cohort its lease identity', async () => {
@@ -709,7 +724,7 @@ describe('ProActivationController activation-record identity (#5621)', () => {
     assert.equal(typeof retro.activationClaimNonce, 'string');
   });
 
-  it('gives each later Finish Setup flow fresh day-0 identity for the current subscription', async () => {
+  it('gives every click from one retained Finish Setup chip fresh ordered day-0 identity', async () => {
     installBrowserState();
     const userId = 'user-chip-identity';
     const subscriptionKey = `opaque-${userId}-subscription`;
@@ -725,49 +740,69 @@ describe('ProActivationController activation-record identity (#5621)', () => {
       container: { dispatchEvent() {} },
       unifiedSettings: { open() {} },
     };
-    const controllers = [
-      new ProActivationController(ctx as never, {
-        reloadPending: false,
-        openAiAnalyst() {},
-      }),
-      new ProActivationController(ctx as never, {
-        reloadPending: false,
-        openAiAnalyst() {},
-      }),
-    ];
+    const controller = new ProActivationController(ctx as never, {
+      reloadPending: false,
+      openAiAnalyst() {},
+    });
 
     try {
-      for (const controller of controllers) {
-        controller.init();
-        await (controller as unknown as { evaluate(): Promise<void> }).evaluate();
-      }
+      controller.init();
+      await (controller as unknown as { evaluate(): Promise<void> }).evaluate();
       const captured = (globalThis as unknown as { __activationChipOptions: unknown[] })
         .__activationChipOptions;
-      for (let attempt = 0; attempt < 40 && captured.length < 2; attempt += 1) {
+      for (let attempt = 0; attempt < 40 && captured.length === 0; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      assert.equal(captured.length, 2, 'each later session must offer the Finish Setup chip');
+      assert.equal(captured.length, 1, 'the later session must retain one Finish Setup chip');
 
-      const [first, second] = captured as Array<Record<string, unknown>>;
+      const chipOptions = captured[0] as Record<string, unknown>;
+      assert.equal(chipOptions.onlyIfUnactivated, false);
+      assert.equal(chipOptions.expectedActivationKey, subscriptionKey);
+      assert.equal(
+        chipOptions.activationClaimNonce,
+        undefined,
+        'the chip must not capture an identity before the user clicks',
+      );
+
+      const click = (
+        globalThis as unknown as {
+          __activationChipClick: (() => Record<string, unknown>) | null;
+        }
+      ).__activationChipClick;
+      assert.equal(typeof click, 'function');
+      click!();
+      click!();
+
+      const [first, second] = (
+        globalThis as unknown as { __activationChipReopenOptions: Array<Record<string, unknown>> }
+      ).__activationChipReopenOptions;
+      assert.ok(first);
+      assert.ok(second);
       for (const options of [first, second]) {
         assert.equal(options.onlyIfUnactivated, false);
         assert.equal(options.expectedActivationKey, subscriptionKey);
         assert.equal(typeof options.activationClaimNonce, 'string');
         assert.notEqual(options.activationClaimNonce, '');
+        assert.equal(typeof options.activationSessionStartedAt, 'number');
       }
       assert.notEqual(
         first.activationClaimNonce,
-        (controllers[0] as unknown as { mountNonce: string }).mountNonce,
+        (controller as unknown as { mountNonce: string }).mountNonce,
         'chip-triggered flows must not reuse the controller mount nonce',
       );
       assert.notEqual(
         second.activationClaimNonce,
         first.activationClaimNonce,
-        'a later chip flow must get a fresh takeover nonce',
+        'the retained chip must mint a fresh nonce on every click',
+      );
+      assert.ok(
+        (second.activationSessionStartedAt as number) >
+          (first.activationSessionStartedAt as number),
+        'the retained chip must mint a strictly newer order on every click',
       );
     } finally {
       ctx.isDestroyed = true;
-      for (const controller of controllers) controller.destroy();
+      controller.destroy();
     }
   });
 });

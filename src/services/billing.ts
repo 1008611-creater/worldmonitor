@@ -188,7 +188,11 @@ export async function confirmProActivationPresentation(
   ) as boolean;
 }
 
-export type ProActivationDay0Outcome = 'opened' | 'already_recorded' | 'not_eligible';
+export type ProActivationDay0Outcome =
+  | 'opened'
+  | 'already_recorded'
+  | 'not_eligible'
+  | 'superseded';
 
 /**
  * Open the day-0 (post-checkout) activation record (#5621).
@@ -197,11 +201,13 @@ export type ProActivationDay0Outcome = 'opened' | 'already_recorded' | 'not_elig
  * exists only so the day-0 cohort has a server-side row instead of having to
  * be reconstructed from Umami sessions. `already_recorded` means an earlier
  * session already finalized this subscription's row, so outcome writes from
- * this one are expected to be rejected.
+ * this one are expected to be rejected. `superseded` means a newer unfinished
+ * session already owns the row, so this delayed opener must drop its snapshots.
  */
 export async function openProActivationDay0Presentation(
   activationKey: string,
   claimNonce: string,
+  sessionStartedAt: number,
 ): Promise<ProActivationDay0Outcome> {
   const client = await getConvexClient();
   const api = await getConvexApi();
@@ -209,7 +215,7 @@ export async function openProActivationDay0Presentation(
   await waitForConvexAuth();
   const result = await client.mutation(
     (api as any).payments.billing.openProActivationDay0Presentation,
-    { activationKey, claimNonce },
+    { activationKey, claimNonce, sessionStartedAt },
   ) as { status: ProActivationDay0Outcome };
   return result.status;
 }

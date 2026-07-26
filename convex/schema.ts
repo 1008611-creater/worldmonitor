@@ -667,6 +667,10 @@ export default defineSchema({
     cohort: v.optional(v.literal("day0")),
     claimNonce: v.string(),
     claimedAt: v.number(),
+    // Day-0 only: client-generated session start used with claimNonce as a
+    // total ownership order. Optional so rows written before the ordered
+    // takeover contract deploy without a backfill.
+    sessionStartedAt: v.optional(v.number()),
     presentedAt: v.optional(v.number()),
     // Set when a presentation is confirmed by an outcome-aware client. This
     // excludes rows created before #5582 without losing post-deploy sessions
