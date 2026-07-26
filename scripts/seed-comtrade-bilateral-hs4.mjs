@@ -67,11 +67,27 @@ const COMTRADE_FETCH_URL = usePublicApi
   : `https://comtradeapi.un.org/data/v1/get/C/A/${COMTRADE_API_CLASSIFIER}`;
 const INTER_REQUEST_DELAY_MS = usePublicApi ? 3500 : 1500;
 
+// A full country pass at 2 requests/country is ~396 authenticated calls against
+// UN Comtrade's 500/mo Free APIs quota. The (y-3) fallback below doubles that
+// for any reporter empty on (y-2), so cap total requests with slack under the
+// cap rather than risk a bad month (e.g. many slow filers) blowing the quota.
+const REQUEST_BUDGET = Number(process.env.COMTRADE_REQUEST_BUDGET) || 480;
+
 // Comtrade annual data lags across reporters. Without an explicit period the
 // API currently returns HTTP 200 with count=0, so every country is silently
 // dropped. Pin the newest safely-final year, matching seed-trade-flows.mjs.
 export function recentPeriod(now = new Date(), lag = 2) {
   return String(now.getUTCFullYear() - lag);
+}
+
+// Candidate periods, freshest first. Some reporters haven't filed (y-2) yet —
+// without a fallback those reporters come back empty for the entire monthly
+// run and (since writes are skipped on empty results, see main()) stay stale
+// until the next cron tick. (y-3) is guaranteed-final. Mirrors
+// seed-trade-flows.mjs's candidatePeriods(), applied per-reporter here instead
+// of via a global coverage gate since each country writes its own key.
+export function candidatePeriods(now = new Date()) {
+  return [recentPeriod(now, 2), recentPeriod(now, 3)];
 }
 
 const BILATERAL_PRODUCTS = STRATEGIC_PRODUCT_METADATA.products.filter((product) => product.bilateralHs4Code);
@@ -244,9 +260,10 @@ function parseRecords(data) {
 
 /**
  * @param {Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>} records
+ * @param {number} [fallbackYear] year to report when no record carries a usable period/refYear
  * @returns {Array<{hs4: string, description: string, totalValue: number, topExporters: Array<{partnerCode: number, partnerIso2: string, value: number, share: number}>, year: number}>}
  */
-function groupByProduct(records) {
+function groupByProduct(records, fallbackYear = Number(recentPeriod())) {
   /** @type {Map<string, Map<string, {value: number, year: number}>>} */
   const byCode = new Map();
   for (const r of records) {
@@ -277,7 +294,7 @@ function groupByProduct(records) {
         value: v.value,
         share: Math.round((v.value / totalValue) * 1000) / 1000,
       })),
-      year: latestYear || 2023,
+      year: latestYear || fallbackYear,
     });
   }
   return products.sort((a, b) => b.totalValue - a.totalValue);
@@ -304,6 +321,7 @@ export async function main() {
 
   const lock = await acquireLockSafely(LOCK_DOMAIN, runId, LOCK_TTL_MS, { label: LOCK_DOMAIN });
 
+  const PERIODS = candidatePeriods();
   const countries = Object.entries(COUNTRY_PORT_CLUSTERS)
     .filter(([k]) => k !== '_comment' && k.length === 2);
   const allKeys = countries.map(([iso2]) => `${KEY_PREFIX}${iso2}:v1`);
@@ -346,17 +364,35 @@ export async function main() {
       if (requestCount > 0) await sleep(INTER_REQUEST_DELAY_MS);
 
       try {
-        console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 1/2...`);
-        const batch1 = await fetchBilateral(unCode, BATCH_1);
-        requestCount++;
+        let batch1 = [];
+        let batch2 = [];
+        let usedPeriod = PERIODS[0];
 
-        await sleep(INTER_REQUEST_DELAY_MS);
+        for (let p = 0; p < PERIODS.length; p++) {
+          if (p > 0 && requestCount + 2 > REQUEST_BUDGET) {
+            console.warn(`    ${iso2}: skipping fallback period ${PERIODS[p]} — request budget reached (${requestCount}/${REQUEST_BUDGET})`);
+            break;
+          }
+          usedPeriod = PERIODS[p];
 
-        console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 2/2...`);
-        const batch2 = await fetchBilateral(unCode, BATCH_2);
-        requestCount++;
+          console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 1/2 (period ${usedPeriod})...`);
+          batch1 = await fetchBilateral(unCode, BATCH_1, usedPeriod);
+          requestCount++;
 
-        const products = groupByProduct([...batch1, ...batch2]);
+          await sleep(INTER_REQUEST_DELAY_MS);
+
+          console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 2/2 (period ${usedPeriod})...`);
+          batch2 = await fetchBilateral(unCode, BATCH_2, usedPeriod);
+          requestCount++;
+
+          if (batch1.length > 0 || batch2.length > 0) break;
+          if (p < PERIODS.length - 1) {
+            console.warn(`    ${iso2}: no records for period ${usedPeriod}, retrying with fallback period ${PERIODS[p + 1]}...`);
+            await sleep(INTER_REQUEST_DELAY_MS);
+          }
+        }
+
+        const products = groupByProduct([...batch1, ...batch2], Number(usedPeriod));
         if (products.length === 0) {
           console.warn(`    ${iso2}: no products after grouping, skipping write`);
         } else {

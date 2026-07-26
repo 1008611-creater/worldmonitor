@@ -6,7 +6,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isTransientComtrade, fetchBilateral, recentPeriod, __setSleepForTests } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
+import { isTransientComtrade, fetchBilateral, recentPeriod, candidatePeriods, __setSleepForTests } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
 import { fetchFlows, checkCoverage, KEY_PREFIX, __setSleepForTests as __setFlowsSleep } from '../scripts/seed-trade-flows.mjs';
 import { fetchImportsForReporter, __setSleepForTests as __setHhiSleep } from '../scripts/seed-recovery-import-hhi.mjs';
 
@@ -89,6 +89,21 @@ test('fetchBilateral: requests an explicit safely-final annual period', async ()
     new URL(fetchCalls[0]).searchParams.get('period'),
     String(new Date().getUTCFullYear() - 2),
   );
+});
+
+test('candidatePeriods: returns (y-2) then (y-3) for the per-reporter fallback', () => {
+  assert.deepEqual(
+    candidatePeriods(new Date('2026-07-02T00:00:00Z')),
+    ['2024', '2023'],
+  );
+});
+
+test('fetchBilateral: an explicit period argument overrides the default', async () => {
+  fetchResponses = [{ status: 200, body: { data: [] } }];
+
+  await fetchBilateral('699', ['2709'], '2023');
+
+  assert.equal(new URL(fetchCalls[0]).searchParams.get('period'), '2023');
 });
 
 test('fetchBilateral: retries once after a single 503, succeeds on second attempt', async () => {

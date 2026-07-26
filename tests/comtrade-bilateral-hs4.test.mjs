@@ -133,6 +133,33 @@ describe('Comtrade bilateral HS4 seeder (scripts/seed-comtrade-bilateral-hs4.mjs
     );
   });
 
+  it('falls back to an earlier period per-reporter when the primary period is empty', () => {
+    assert.ok(
+      src.includes('export function candidatePeriods'),
+      'seeder: must export candidatePeriods() so a reporter that has not filed (y-2) yet is retried at (y-3)',
+    );
+    assert.match(
+      src,
+      /if \(batch1\.length > 0 \|\| batch2\.length > 0\) break;/,
+      'seeder: must stop retrying a reporter as soon as a period returns records',
+    );
+  });
+
+  it('does not carry a hardcoded fallback year — must derive from the requested period', () => {
+    assert.doesNotMatch(
+      src,
+      /latestYear \|\| 202\d\b/,
+      'seeder: year fallback must track the requested period, not a hardcoded year that goes stale',
+    );
+  });
+
+  it('caps total requests under the UN Comtrade 500/mo quota even with the period fallback', () => {
+    assert.ok(
+      /REQUEST_BUDGET/.test(src),
+      'seeder: the (y-3) fallback can double request volume for reporters empty on (y-2) — must be guarded by a request budget',
+    );
+  });
+
   it('META_KEY follows seed-meta: convention', () => {
     const match = src.match(/META_KEY\s*=\s*'(seed-meta:[^']+)'/);
     assert.ok(

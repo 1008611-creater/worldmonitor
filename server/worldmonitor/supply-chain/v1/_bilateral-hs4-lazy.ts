@@ -29,6 +29,14 @@ function recentPeriod(now = new Date(), lag = 2): string {
   return String(now.getUTCFullYear() - lag);
 }
 
+// Unlike scripts/seed-comtrade-bilateral-hs4.mjs, this path does NOT fall back
+// to (y-3) when (y-2) is empty: this runs synchronously inside a live request
+// (get-route-impact) under the FETCH_TIMEOUT_MS budget above, and a second
+// sequential round trip would risk doubling response latency for every miss.
+// The 24h EMPTY_TTL sentinel below already bounds the staleness from a
+// reporter that has not yet filed (y-2) — far tighter than the bulk seeder's
+// 40-day cache, which is why that path carries the fallback instead.
+
 const HS4_CODES = [
   '2709', '2711', '8542', '8517', '8703', '3004', '7108', '2710',
   '8471', '8411', '7601', '7202', '3901', '2902', '1001', '1201',
