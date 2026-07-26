@@ -5,8 +5,8 @@
 export const DODO_PRODUCT_IDS: ReadonlySet<string> = new Set([
   'pdt_0Nbtt71uObulf7fGXhQup',
   'pdt_0NbttMIfjLWC10jHQWYgJ',
-  'pdt_PLACEHOLDER_PB_MONTHLY',
-  'pdt_PLACEHOLDER_PB_ANNUAL',
+  'pdt_0NjyFDbhURh2oROgPIU3G',
+  'pdt_0Nk072fxPUcHWivZRtlQW',
   'pdt_0NbttVmG1SERrxhygbbUq',
   'pdt_0Nbu2lawHYE3dv2THgSEV',
   'pdt_0Nbttg7NuOJrhbyBGCius',

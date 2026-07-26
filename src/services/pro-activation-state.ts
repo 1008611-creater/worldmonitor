@@ -44,8 +44,8 @@
 export const PRO_PRODUCT_IDS: readonly string[] = [
   'pdt_0Nbtt71uObulf7fGXhQup', // PRO_MONTHLY
   'pdt_0NbttMIfjLWC10jHQWYgJ', // PRO_ANNUAL
-  'pdt_PLACEHOLDER_PB_MONTHLY', // PRO_BUSINESS_MONTHLY
-  'pdt_PLACEHOLDER_PB_ANNUAL', // PRO_BUSINESS_ANNUAL
+  'pdt_0NjyFDbhURh2oROgPIU3G', // PRO_BUSINESS_MONTHLY
+  'pdt_0Nk072fxPUcHWivZRtlQW', // PRO_BUSINESS_ANNUAL
 ];
 
 /** The entitlement plan keys that classify as Pro (productCatalog.ts). */

@@ -6645,8 +6645,8 @@ const DODO_PRICE_ENV = process.env.DODO_PAYMENTS_ENVIRONMENT || 'test_mode';
 const DODO_PRODUCT_IDS = [
   'pdt_0Nbtt71uObulf7fGXhQup', // Pro Monthly
   'pdt_0NbttMIfjLWC10jHQWYgJ', // Pro Annual
-  'pdt_PLACEHOLDER_PB_MONTHLY', // Pro Business Monthly (#5604) — placeholder until the Dodo product exists
-  'pdt_PLACEHOLDER_PB_ANNUAL', // Pro Business Annual (#5604) — placeholder until the Dodo product exists
+  'pdt_0NjyFDbhURh2oROgPIU3G', // Pro Business Monthly (#5604)
+  'pdt_0Nk072fxPUcHWivZRtlQW', // Pro Business Annual (#5604)
   'pdt_0NbttVmG1SERrxhygbbUq', // API Starter Monthly
   'pdt_0Nbu2lawHYE3dv2THgSEV', // API Starter Annual
   'pdt_0Nbttg7NuOJrhbyBGCius', // API Business Monthly (#4945)
@@ -6669,8 +6669,8 @@ const DODO_TIER_CONFIG = {
 const DODO_PRODUCT_META = {
   'pdt_0Nbtt71uObulf7fGXhQup': { tierGroup: 'pro', billingPeriod: 'monthly' },
   'pdt_0NbttMIfjLWC10jHQWYgJ': { tierGroup: 'pro', billingPeriod: 'annual' },
-  'pdt_PLACEHOLDER_PB_MONTHLY': { tierGroup: 'pro_business', billingPeriod: 'monthly' },
-  'pdt_PLACEHOLDER_PB_ANNUAL': { tierGroup: 'pro_business', billingPeriod: 'annual' },
+  'pdt_0NjyFDbhURh2oROgPIU3G': { tierGroup: 'pro_business', billingPeriod: 'monthly' },
+  'pdt_0Nk072fxPUcHWivZRtlQW': { tierGroup: 'pro_business', billingPeriod: 'annual' },
   'pdt_0NbttVmG1SERrxhygbbUq': { tierGroup: 'api_starter', billingPeriod: 'monthly' },
   'pdt_0Nbu2lawHYE3dv2THgSEV': { tierGroup: 'api_starter', billingPeriod: 'annual' },
   'pdt_0Nbttg7NuOJrhbyBGCius': { tierGroup: 'api_business', billingPeriod: 'monthly' },
@@ -6679,8 +6679,8 @@ const DODO_PRODUCT_META = {
 const DODO_FALLBACK_PRICES = {
   'pdt_0Nbtt71uObulf7fGXhQup': 3999,
   'pdt_0NbttMIfjLWC10jHQWYgJ': 39999,
-  'pdt_PLACEHOLDER_PB_MONTHLY': 6999,
-  'pdt_PLACEHOLDER_PB_ANNUAL': 69999,
+  'pdt_0NjyFDbhURh2oROgPIU3G': 6999,
+  'pdt_0Nk072fxPUcHWivZRtlQW': 69999,
   'pdt_0NbttVmG1SERrxhygbbUq': 9999,
   'pdt_0Nbu2lawHYE3dv2THgSEV': 99900,
   'pdt_0Nbttg7NuOJrhbyBGCius': 29999,

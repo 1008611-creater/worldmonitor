@@ -325,7 +325,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     // product ID before launch (activation runbook, plan 2026-07-25-001).
     // Reaching checkout with this ID is a launch-sequencing bug, not a
     // supported path.
-    dodoProductId: "pdt_PLACEHOLDER_PB_MONTHLY",
+    dodoProductId: "pdt_0NjyFDbhURh2oROgPIU3G",
     planKey: "pro_business_monthly",
     displayName: "Pro Business Monthly",
     priceCents: 6999,
@@ -353,7 +353,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
 
   pro_business_annual: {
     // PLACEHOLDER — see pro_business_monthly.
-    dodoProductId: "pdt_PLACEHOLDER_PB_ANNUAL",
+    dodoProductId: "pdt_0Nk072fxPUcHWivZRtlQW",
     planKey: "pro_business_annual",
     displayName: "Pro Business Annual",
     priceCents: 69999,

@@ -745,7 +745,7 @@ describe("multi-active-sub guard", () => {
     await seedBothProVariantsPlus(t, {
       subscriptionId: "sub_pro_business_monthly",
       planKey: "pro_business_monthly",
-      productId: "pdt_PLACEHOLDER_PB_MONTHLY",
+      productId: "pdt_0NjyFDbhURh2oROgPIU3G",
     });
 
     // Trigger a recompute by firing renewed on the longest-lived Pro sub.
@@ -765,7 +765,7 @@ describe("multi-active-sub guard", () => {
     await seedBothProVariantsPlus(t, {
       subscriptionId: "sub_pro_business_annual",
       planKey: "pro_business_annual",
-      productId: "pdt_PLACEHOLDER_PB_ANNUAL",
+      productId: "pdt_0Nk072fxPUcHWivZRtlQW",
     });
 
     await fireSubscriptionRenewed(t, "sub_pro_annual", "pdt_0NbttMIfjLWC10jHQWYgJ");

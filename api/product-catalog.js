@@ -36,8 +36,8 @@ const CACHE_TTL = 3600; // 1 hour
 const CATALOG = {
   'pdt_0Nbtt71uObulf7fGXhQup': { planKey: 'pro_monthly', tierGroup: 'pro', billingPeriod: 'monthly' },
   'pdt_0NbttMIfjLWC10jHQWYgJ': { planKey: 'pro_annual', tierGroup: 'pro', billingPeriod: 'annual' },
-  'pdt_PLACEHOLDER_PB_MONTHLY': { planKey: 'pro_business_monthly', tierGroup: 'pro_business', billingPeriod: 'monthly' },
-  'pdt_PLACEHOLDER_PB_ANNUAL': { planKey: 'pro_business_annual', tierGroup: 'pro_business', billingPeriod: 'annual' },
+  'pdt_0NjyFDbhURh2oROgPIU3G': { planKey: 'pro_business_monthly', tierGroup: 'pro_business', billingPeriod: 'monthly' },
+  'pdt_0Nk072fxPUcHWivZRtlQW': { planKey: 'pro_business_annual', tierGroup: 'pro_business', billingPeriod: 'annual' },
   'pdt_0NbttVmG1SERrxhygbbUq': { planKey: 'api_starter', tierGroup: 'api_starter', billingPeriod: 'monthly' },
   'pdt_0Nbu2lawHYE3dv2THgSEV': { planKey: 'api_starter_annual', tierGroup: 'api_starter', billingPeriod: 'annual' },
   'pdt_0Nbttg7NuOJrhbyBGCius': { planKey: 'api_business', tierGroup: 'api_business', billingPeriod: 'monthly' },
