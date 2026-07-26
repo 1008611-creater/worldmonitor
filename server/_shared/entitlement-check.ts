@@ -66,6 +66,21 @@ export interface CachedEntitlements {
      * permanent rather than a migration window.
      */
     dataExport?: boolean;
+    /**
+     * Catalog plan limits, mirrored verbatim from `PlanFeatures.planLimits`
+     * (convex/config/productCatalog.ts). Optional because legacy rows predate
+     * it and because the Convex read path only merges what the catalog holds.
+     * `null` on a member means **unlimited**; a MISSING member (or a missing
+     * `planLimits` altogether) means unknown, and consumers resolve unknown
+     * toward cost protection — never toward the higher allowance. The MCP
+     * daily quota (plan 2026-07-25-001 U3) is the first consumer.
+     */
+    planLimits?: {
+      apiRequestsPerDay?: number | null;
+      apiBurstRequestsPerMinute?: number | null;
+      mcpCallsPerDay?: number | null;
+      mcpBurstRequestsPerMinute?: number | null;
+    };
   };
   validUntil: number;
   billingStatus?: BillingVerificationStatus;
