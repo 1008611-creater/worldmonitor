@@ -295,7 +295,12 @@ interface PrintHostDocument {
     style: { cssText: string };
     setAttribute?(name: string, value: string): void;
     contentDocument: { open(): void; write(html: string): void; close(): void } | null;
-    contentWindow: { print(): void; onafterprint: (() => void) | null } | null;
+    contentWindow: {
+      print(): void;
+      onafterprint: (() => void) | null;
+      /** Fallback when `contentDocument` is null (some webviews). */
+      document?: { open(): void; write(html: string): void; close(): void };
+    } | null;
   };
   body: { appendChild(node: unknown): void; removeChild(node: unknown): void };
 }
