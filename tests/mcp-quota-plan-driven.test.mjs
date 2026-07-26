@@ -15,10 +15,16 @@
 //                                     -32029 message so a regression back to the
 //                                     hardcoded constant can't hide
 //
-// KTD6 boundary: plan-driven limits reach the `pro` context ONLY. A `user_key`
-// caller keeps the hardcoded 50/day whatever their plan says — raising API-plan
-// MCP allowances is a deliberate follow-up, not a side effect of this unit. The
-// last describe block is the witness for that.
+// KTD6 boundary: plan-driven limits reach the `pro` context ONLY — and the
+// boundary is a PLAN boundary, not a credential boundary. A `user_key` caller
+// keeps the hardcoded 50/day whatever their plan says, AND an API-tier
+// entitlement arriving through the pro (OAuth) door keeps 50 too: API-tier
+// subscribers satisfy the pro-token mint gate (tier>=1 + mcpAccess), so
+// without `resolvePlanDrivenMcpAllowance` their 1000/10000 catalog allowance
+// would leak through the door their `user_key` is capped behind. Raising
+// API-plan MCP allowances is a deliberate follow-up, not a side effect of
+// this unit. The API-tier cases below and the last describe block are the
+// witnesses for that.
 //
 // Why a sibling file rather than an insert into tests/mcp.test.mjs: the quota
 // surface already splits its concerns this way (mcp-quota-concurrent.test.mjs,
@@ -248,6 +254,29 @@ describe('api/mcp.ts — plan-driven daily quota on the pro context', () => {
     const res = await mcpHandler(proReq('POST', callBody('get_market_data')), deps);
     assert.equal(res.status, 200, 'a null allowance must skip the rejection branch entirely');
     assert.equal(pipe.count, 60, 'unlimited is not unmetered — the counter still moves');
+  });
+
+  it('SECURITY: api_starter on the PRO context is capped at 50, not its 1000 catalog allowance', async () => {
+    const { deps, pipe } = makeProDeps({
+      pipelineOpts: { initialCount: 50 },
+      getEntitlements: async () => entitlement('api_starter', limits(1000), { tier: 2 }),
+    });
+    const res = await mcpHandler(proReq('POST', callBody('get_market_data')), deps);
+    assert.equal(res.status, 429, 'API-tier catalog allowances must not leak through the OAuth door');
+    const body = await res.json();
+    assert.equal(body.error?.code, -32029);
+    assert.match(body.error.message, /\(50\/day\)/, 'the enforced limit is the hardcoded default, not the plan value');
+    assert.equal(pipe.count, 50);
+  });
+
+  it('SECURITY: api_business on the PRO context is capped at 50, not its 10000 catalog allowance', async () => {
+    const { deps, pipe } = makeProDeps({
+      pipelineOpts: { initialCount: 50 },
+      getEntitlements: async () => entitlement('api_business', limits(10_000), { tier: 2 }),
+    });
+    const res = await mcpHandler(proReq('POST', callBody('get_market_data')), deps);
+    assert.equal(res.status, 429);
+    assert.equal(pipe.count, 50);
   });
 
   it('entitlement with no planLimits → default 50: request served under the cap, no throw', async () => {

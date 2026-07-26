@@ -39,6 +39,40 @@ export function resolveDailyLimit(planDailyLimit?: number | null): number | null
   return PRO_DAILY_QUOTA_LIMIT;
 }
 
+/**
+ * Plans whose catalog `mcpCallsPerDay` must NOT drive the daily cap on the
+ * pro (OAuth) MCP context. The KTD6 boundary is a PLAN boundary, not a
+ * credential boundary: API-tier subscribers can mint pro OAuth tokens too
+ * (tier>=1 + mcpAccess), and without this gate their catalog allowance
+ * (1000/10000) would leak through the OAuth door while their `user_key`
+ * stays hardcoded at 50. Raising API-tier MCP allowances is a deliberate
+ * follow-up; until then both credential classes must agree on the cap.
+ */
+const API_TIER_MCP_CAPPED_PLAN_KEYS = new Set([
+  'api_starter',
+  'api_starter_annual',
+  'api_business',
+  'api_business_annual',
+]);
+
+/**
+ * Gate a plan-resolved MCP allowance on plan family: API-tier plans report
+ * `undefined` (→ the 50/day default via `resolveDailyLimit`); every other
+ * plan's allowance passes through verbatim — pro/pro_business plan-driven
+ * numbers, enterprise's `null` (unlimited), free's `0`.
+ *
+ * Shared by the enforcement path (`checkMcpEntitlementGate`) and the
+ * settings display (`api/user/mcp-quota.ts`) so the number a user reads is
+ * the number the reservation applies.
+ */
+export function resolvePlanDrivenMcpAllowance(
+  planKey: string | undefined,
+  mcpCallsPerDay: number | null | undefined,
+): number | null | undefined {
+  if (planKey && API_TIER_MCP_CAPPED_PLAN_KEYS.has(planKey)) return undefined;
+  return mcpCallsPerDay;
+}
+
 export async function reserveQuota(
   userId: string,
   pipeline: PipelineFn,

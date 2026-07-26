@@ -258,19 +258,28 @@ export function primeExportGateActivation(fetchImpl?: CatalogFetch): Promise<boo
   if (activationProbe) return activationProbe;
 
   const doFetch: CatalogFetch = fetchImpl ?? ((...args) => globalThis.fetch(...args));
-  activationProbe = (async () => {
+  // `null` = transient failure (offline, blocked, non-2xx, timed out) — the
+  // gate stays inactive (fail-open) but the probe is NOT cached, so the next
+  // prime retries instead of pinning a startup blip for the whole session.
+  // Only a definitive verdict from a parsed catalog payload is cached.
+  const probe = (async (): Promise<boolean | null> => {
     try {
       const res = await doFetch(CATALOG_ENDPOINT, { signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS) });
-      if (!res.ok) return false;
+      if (!res.ok) return null;
       return catalogExposesProBusiness(await res.json());
     } catch {
-      // Offline, blocked, timed out: the gate stays inactive (fail-open).
+      return null;
+    }
+  })().then((verdict) => {
+    if (verdict === null) {
+      if (activationProbe === probe) activationProbe = null;
+      gateActive = false;
       return false;
     }
-  })().then((active) => {
-    gateActive = active;
-    return active;
+    gateActive = verdict;
+    return verdict;
   });
+  activationProbe = probe;
 
   return activationProbe;
 }

@@ -159,6 +159,11 @@ export class PanelTabBar {
     if (wasLocked && lock === null) {
       this.closeAddLockNotice();
       this.liveRegion.textContent = t('components.tabCap.unlockedAnnouncement');
+    } else if (this.notice) {
+      // Locked → locked with different copy (e.g. anonymous → signed-in
+      // free): the open notice carries the OLD reason and the OLD onAction
+      // closure. Close it; the next "+" click rebuilds from the new lock.
+      this.closeAddLockNotice();
     }
   }
 

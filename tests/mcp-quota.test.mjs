@@ -293,6 +293,19 @@ describe('mcp-quota handler — plan-resolved limit (U3b)', () => {
     assert.equal(body.used, 0);
   });
 
+  it('displays 50 for an API-tier plan, not its catalog MCP allowance (display == enforcement)', async () => {
+    // Enforcement caps API-tier entitlements at the 50/day default on BOTH
+    // credential paths (resolvePlanDrivenMcpAllowance); showing api_starter's
+    // 1000 here would advertise a limit the meter never applies.
+    const deps = makeDeps({
+      getEntitlements: async () => entitlement('api_starter', limits(1000)),
+      redisGet: async () => '48',
+    });
+    const body = await (await quotaHandler(makeReq(), deps)).json();
+    assert.equal(body.limit, 50, 'API-tier catalog allowance must not leak into the display');
+    assert.equal(body.used, 48);
+  });
+
   it('falls back to 50 for a legacy entitlement row with no planLimits', async () => {
     const deps = makeDeps({
       getEntitlements: async () => entitlement('pro_monthly', undefined),

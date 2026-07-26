@@ -43,7 +43,7 @@ import { getCorsHeaders } from '../_cors.js';
 import { captureSilentError } from '../_sentry-edge.js';
 import { resolveClerkSession } from '../../server/_shared/auth-session';
 import { getEntitlements } from '../../server/_shared/entitlement-check';
-import { resolveDailyLimit } from '../mcp/quota';
+import { resolveDailyLimit, resolvePlanDrivenMcpAllowance } from '../mcp/quota';
 import {
   dailyCounterKey,
   secondsUntilUtcMidnight,
@@ -60,11 +60,12 @@ export interface QuotaDeps {
    */
   redisGet: (key: string) => Promise<string | null>;
   /**
-   * Cached entitlement read for the plan allowance. Only
-   * `features.planLimits.mcpCallsPerDay` is consumed; null/throw fall back to
-   * the plan default via `resolveDailyLimit`.
+   * Cached entitlement read for the plan allowance. Only `planKey` and
+   * `features.planLimits.mcpCallsPerDay` are consumed; null/throw fall back
+   * to the plan default via `resolveDailyLimit`.
    */
   getEntitlements: (userId: string) => Promise<{
+    planKey?: string;
     features?: {
       planLimits?: { mcpCallsPerDay?: number | null };
     };
@@ -119,11 +120,14 @@ export async function quotaHandler(req: Request, deps: QuotaDeps): Promise<Respo
 
   // Plan allowance first — `used` is clamped to THIS number, not to the
   // historical 50. An unreadable entitlement leaves `planDailyLimit`
-  // undefined, which resolveDailyLimit turns into the plan default.
+  // undefined, which resolveDailyLimit turns into the plan default. The
+  // plan-family gate mirrors enforcement (`checkMcpEntitlementGate`): an
+  // API-tier plan's catalog allowance is NOT what the meter applies, so it
+  // must not be what this endpoint displays.
   let planDailyLimit: number | null | undefined;
   try {
     const ent = await deps.getEntitlements(userId);
-    planDailyLimit = ent?.features?.planLimits?.mcpCallsPerDay;
+    planDailyLimit = resolvePlanDrivenMcpAllowance(ent?.planKey, ent?.features?.planLimits?.mcpCallsPerDay);
   } catch (err) {
     console.warn(
       '[mcp-quota] entitlement lookup failed:',

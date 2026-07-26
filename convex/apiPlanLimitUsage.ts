@@ -121,10 +121,7 @@ function dodoUpgradeNotice(planKey: string, dimension: PlanLimitDimension): Omit
   // the same "buy API Starter" CTA. Without the pro_business arm the notice
   // falls through to `{ctaKind: 'none'}`: the customer is told they hit the cap
   // with no way out of it.
-  if (
-    planKey === "pro_monthly" || planKey === "pro_annual"
-    || planKey === "pro_business_monthly" || planKey === "pro_business_annual"
-  ) {
+  if (isRedisMeteredMcpPlan(planKey)) {
     return { upgradeTargetPlanKey: "api_starter", ctaKind: "checkout" };
   }
   if (planKey === "api_starter" || planKey === "api_starter_annual") {

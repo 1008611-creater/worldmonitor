@@ -10,6 +10,7 @@ import { getClientIp } from '../_client-ip.js';
 import { captureSilentError } from '../_sentry-edge.js';
 // @ts-expect-error — JS module, no declaration file
 import { redisPipeline as rawRedisPipeline } from '../_upstash-json.js';
+import { resolvePlanDrivenMcpAllowance } from './quota';
 import {
   getBillingVerificationDenial,
   getEntitlements,
@@ -426,9 +427,13 @@ export async function runProPreChecks(
  * with a 401 Response otherwise.
  *
  * A passing result also reports `mcpDailyLimit`, read straight off the
- * entitlement this call already fetched. A row with no `planLimits` (legacy
- * shape) reports `undefined`, which the quota layer resolves to the plan
- * default — the entitlement is NOT re-fetched to fill the gap.
+ * entitlement this call already fetched — but only for plan-driven plan
+ * families (`resolvePlanDrivenMcpAllowance`): API-tier subscribers reach this
+ * gate through the same OAuth door, and their catalog allowance must not
+ * out-rank the 50/day their `user_key` is capped at. A row with no
+ * `planLimits` (legacy shape) or a non-plan-driven plan reports `undefined`,
+ * which the quota layer resolves to the plan default — the entitlement is
+ * NOT re-fetched to fill the gap.
  */
 async function checkMcpEntitlementGate(
   userId: string,
@@ -453,7 +458,10 @@ async function checkMcpEntitlementGate(
   const tier = ent?.features?.tier ?? 0;
   const mcpAccess = ent?.features?.mcpAccess === true;
   const validUntil = ent?.validUntil ?? 0;
-  const passed = (): McpPreCheckResult => ({ ok: true, mcpDailyLimit: ent?.features?.planLimits?.mcpCallsPerDay });
+  const passed = (): McpPreCheckResult => ({
+    ok: true,
+    mcpDailyLimit: resolvePlanDrivenMcpAllowance(ent?.planKey, ent?.features?.planLimits?.mcpCallsPerDay),
+  });
   // Renewal uncertainty on a stronger subscription must not revoke MCP when
   // a separate, current fallback subscription still authorizes MCP access.
   if (ent && tier >= 1 && mcpAccess && validUntil >= Date.now()) {

@@ -310,4 +310,41 @@ describe('primeExportGateActivation — single-flight probe', () => {
     await primeExportGateActivation(probe);
     assert.equal(calls, 1);
   });
+
+  it('a transient failure is NOT cached: the next prime retries and can activate', async () => {
+    let calls = 0;
+    const flaky = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('startup blip');
+      return { ok: true, json: async () => ({ tiers: [{ id: 'pro_business' }] }) } as never;
+    };
+    assert.equal(await primeExportGateActivation(flaky), false);
+    assert.equal(await primeExportGateActivation(flaky), true, 'a session-long dead gate from one startup blip is the bug');
+    assert.equal(isExportGateActive(), true);
+    assert.equal(calls, 2);
+  });
+
+  it('a non-ok response is NOT cached either', async () => {
+    let calls = 0;
+    const probe = async () => {
+      calls += 1;
+      return (calls === 1
+        ? { ok: false, json: async () => ({}) }
+        : { ok: true, json: async () => ({ tiers: [{ id: 'pro_business' }] }) }) as never;
+    };
+    assert.equal(await primeExportGateActivation(probe), false);
+    assert.equal(await primeExportGateActivation(probe), true);
+  });
+
+  it('a definitive "tier not served" verdict IS cached — one fetch per session', async () => {
+    let calls = 0;
+    const probe = async () => {
+      calls += 1;
+      return { ok: true, json: async () => ({ tiers: [{ id: 'pro' }] }) } as never;
+    };
+    await primeExportGateActivation(probe);
+    await primeExportGateActivation(probe);
+    assert.equal(calls, 1);
+    assert.equal(isExportGateActive(), false);
+  });
 });
