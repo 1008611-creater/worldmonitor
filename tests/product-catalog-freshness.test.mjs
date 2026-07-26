@@ -198,8 +198,8 @@ describe('Product catalog freshness', () => {
       }
     }
 
-    const groupToName = { free: 'Free', pro: 'Pro', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
-    const groupToLocaleKey = { free: 'free', pro: 'pro', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
+    const groupToName = { free: 'Free', pro: 'Pro', pro_business: 'Pro Business', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
+    const groupToLocaleKey = { free: 'free', pro: 'pro', pro_business: 'proBusiness', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
     const tiersByLocaleKey = new Map(tiersJson.map((tier) => [tier.localeKey, tier]));
 
     for (const group of visibleGroups) {
@@ -295,7 +295,15 @@ describe('Product catalog freshness', () => {
     }
     assert.ok(entries.length >= 5, 'expected at least 5 priced publicVisible catalog entries');
 
-    const relayIds = [...relaySrc.matchAll(/'(pdt_[A-Za-z0-9]+)'/g)].map((m) => m[1]);
+    // Scoped to the DODO_PRODUCT_IDS array, not the whole file: that array is
+    // what the seed loop iterates to fetch prices, and an id present only in
+    // DODO_PRODUCT_META/DODO_FALLBACK_PRICES yields a tier with no price and no
+    // productId — the #4946 broken-card failure this test exists to catch.
+    // Underscores allowed because pre-launch placeholders (pdt_PLACEHOLDER_*)
+    // are not alphanumeric like live Dodo ids.
+    const productIdsMatch = relaySrc.match(/const DODO_PRODUCT_IDS = \[([\s\S]*?)\];/);
+    assert.ok(productIdsMatch, 'ais-relay.cjs must declare DODO_PRODUCT_IDS');
+    const relayIds = [...productIdsMatch[1].matchAll(/'(pdt_[A-Za-z0-9_]+)'/g)].map((m) => m[1]);
     const publicGroupsMatch = relaySrc.match(/const publicGroups = \[([^\]]+)\]/);
     assert.ok(publicGroupsMatch, 'ais-relay.cjs must declare publicGroups');
     const relayGroups = [...publicGroupsMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
@@ -339,7 +347,7 @@ describe('Product catalog freshness', () => {
       'tier features have drifted between ais-relay.cjs and api/product-catalog.js');
     const tiersByName = new Map(tiersJson.map((tier) => [tier.name, tier]));
     for (const [group, features] of Object.entries(edgeFeatures)) {
-      const name = { free: 'Free', pro: 'Pro', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' }[group];
+      const name = { free: 'Free', pro: 'Pro', pro_business: 'Pro Business', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' }[group];
       const generated = tiersByName.get(name);
       if (!generated) continue;
       assert.deepEqual(features, generated.features,
@@ -350,12 +358,61 @@ describe('Product catalog freshness', () => {
     // so translations survive the live payload replacing static tiers.json
     // (PricingSection falls back to name.toLowerCase(), which breaks for
     // multi-word names like 'API Business').
-    for (const localeKey of ['free', 'pro', 'api', 'apiBusiness', 'enterprise']) {
+    for (const localeKey of ['free', 'pro', 'proBusiness', 'api', 'apiBusiness', 'enterprise']) {
       for (const [label, src] of [['ais-relay.cjs', relaySrc], ['api/product-catalog.js', edgeSrc]]) {
         assert.ok(src.includes(`localeKey: '${localeKey}'`),
           `${label} TIER_CONFIG is missing localeKey '${localeKey}'`);
       }
     }
+  });
+
+  // The license chips are the whole point of the Pro Business release, and
+  // they travel in `highlightFeatures` — a field the mirror-parity check above
+  // cannot see (its extractor stops at the first `features: [`) and that the
+  // generator does NOT sync into the locales. So a chip could say "No
+  // commercial use" on the live /pro page while the catalog sells a commercial
+  // license, with every other gate green.
+  it('license chips (highlightFeatures) match across catalog, both mirrors, and en.json', () => {
+    const extractHighlights = (src, label) => {
+      const map = {};
+      for (const m of src.matchAll(/(\w+):\s*\{[^{}]*?highlightFeatures:\s*\[([^\]]*)\]/g)) {
+        map[m[1]] = [...m[2].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((f) => f[1]);
+      }
+      assert.ok(Object.keys(map).length >= 4, label + ': expected ≥4 tier highlightFeature lists');
+      return map;
+    };
+    const relayHighlights = extractHighlights(readFileSync(join(ROOT, 'scripts/ais-relay.cjs'), 'utf8'), 'ais-relay.cjs');
+    const edgeHighlights = extractHighlights(readFileSync(join(ROOT, 'api/product-catalog.js'), 'utf8'), 'api/product-catalog.js');
+    assert.deepEqual(relayHighlights, edgeHighlights,
+      'license chips have drifted between ais-relay.cjs and api/product-catalog.js');
+
+    const groupToLocaleKey = { free: 'free', pro: 'pro', pro_business: 'proBusiness', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
+    const tiersByLocaleKey = new Map(tiersJson.map((tier) => [tier.localeKey, tier]));
+    const enLocale = JSON.parse(readFileSync(join(proLocalesDir, 'en.json'), 'utf8'));
+
+    for (const [group, highlights] of Object.entries(edgeHighlights)) {
+      const localeKey = groupToLocaleKey[group];
+      assert.ok(localeKey, 'mirror tier group ' + group + ' has no localeKey mapping in this test');
+      assert.deepEqual(highlights, tiersByLocaleKey.get(localeKey)?.highlightFeatures,
+        'license chips for ' + group + ' drifted between the mirrors and generated tiers.json (catalog highlightFeatures)');
+      assert.deepEqual(enLocale.pricing.tiers[localeKey]?.highlightFeatures, highlights,
+        'en.json pricing.tiers.' + localeKey + '.highlightFeatures is stale — the generator does not sync this field, edit it by hand');
+    }
+  });
+
+  // Pro Business is only sellable if the generated tier carries BOTH product
+  // ids: pro-test/src/services/checkout.ts derives PRO_BUSINESS_PRODUCT_IDS
+  // from tiers where `name === 'Pro Business'`, and an empty set silently
+  // disables the guided cancel-then-rebuy 409 copy for Pro subscribers.
+  it('generated Pro Business tier carries both checkout product ids', () => {
+    const proBusiness = tiersJson.find((tier) => tier.name === 'Pro Business');
+    assert.ok(proBusiness, "tiers.json is missing the 'Pro Business' tier");
+    assert.equal(proBusiness.localeKey, 'proBusiness');
+    assert.ok(proBusiness.monthlyProductId, 'Pro Business should have monthlyProductId');
+    assert.ok(proBusiness.annualProductId, 'Pro Business should have annualProductId');
+    assert.equal(typeof proBusiness.monthlyPrice, 'number', 'Pro Business should have monthlyPrice');
+    assert.equal(typeof proBusiness.annualPrice, 'number', 'Pro Business should have annualPrice');
+    assert.equal(proBusiness.planLimits?.mcpCallsPerDay, 250, 'Pro Business MCP daily limit should be visible');
   });
 
   it('generated files and pro locale placeholders are fresh (re-running generator produces same output)', () => {
@@ -423,7 +480,7 @@ describe('Product catalog freshness', () => {
 
     // Each visible group should have a corresponding tier in the JSON
     // Map group names to expected display names
-    const groupToName = { free: 'Free', pro: 'Pro', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
+    const groupToName = { free: 'Free', pro: 'Pro', pro_business: 'Pro Business', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
     for (const group of visibleGroups) {
       const expectedName = groupToName[group] || group;
       assert.ok(

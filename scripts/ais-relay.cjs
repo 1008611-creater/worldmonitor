@@ -6636,7 +6636,7 @@ function startPizzintSeedLoop() {
 // ─────────────────────────────────────────────────────────────
 const DODO_PRICE_SEED_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const DODO_PRICE_SEED_TTL = 43200; // 12h (2× interval)
-const DODO_PRICE_REDIS_KEY = 'product-catalog:v2';
+const DODO_PRICE_REDIS_KEY = 'product-catalog:v3';
 const DODO_LIVE_URL = 'https://live.dodopayments.com';
 const DODO_TEST_URL = 'https://test.dodopayments.com';
 const DODO_PRICE_API_KEY = process.env.DODO_API_KEY || '';
@@ -6645,6 +6645,8 @@ const DODO_PRICE_ENV = process.env.DODO_PAYMENTS_ENVIRONMENT || 'test_mode';
 const DODO_PRODUCT_IDS = [
   'pdt_0Nbtt71uObulf7fGXhQup', // Pro Monthly
   'pdt_0NbttMIfjLWC10jHQWYgJ', // Pro Annual
+  'pdt_PLACEHOLDER_PB_MONTHLY', // Pro Business Monthly (#5604) — placeholder until the Dodo product exists
+  'pdt_PLACEHOLDER_PB_ANNUAL', // Pro Business Annual (#5604) — placeholder until the Dodo product exists
   'pdt_0NbttVmG1SERrxhygbbUq', // API Starter Monthly
   'pdt_0Nbu2lawHYE3dv2THgSEV', // API Starter Annual
   'pdt_0Nbttg7NuOJrhbyBGCius', // API Business Monthly (#4945)
@@ -6656,16 +6658,19 @@ const DODO_PRODUCT_IDS = [
 // cache hits — so drift here silently changes the /pro pricing page (#4946
 // P0, #4974). Parity enforced by tests/product-catalog-freshness.test.mjs.
 const DODO_TIER_CONFIG = {
-  free: { name: 'Free', localeKey: 'free', description: 'Get started with the essentials', features: ['Core dashboard panels', 'Global news feed', 'Earthquake & weather alerts', 'Basic map view'], cta: 'Get Started', href: 'https://worldmonitor.app/dashboard', highlighted: false },
-  pro: { name: 'Pro', localeKey: 'pro', description: 'Full intelligence dashboard', features: ['Everything in Free', 'AI stock analysis & backtesting', 'Daily market briefs', 'Military & geopolitical tracking', 'Custom widget builder', 'MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)', 'Priority data refresh'], highlighted: true },
-  api_starter: { name: 'API Starter', localeKey: 'api', description: 'Programmatic access to intelligence data', features: ['REST API + official SDKs (npm, PyPI, RubyGems, Go)', 'License / API key included', 'Real-time data streams', '60 requests/minute', '1,000 requests/day included', 'Webhook notifications'], highlightFeatures: ['No commercial use'], highlighted: false },
-  api_business: { name: 'API Business', localeKey: 'apiBusiness', description: 'High-volume API for teams', features: ['Everything in API Starter', '300 requests/minute', '10,000 requests/day included', '5 Pro licenses included', 'Same company email required', 'Priority support'], highlightFeatures: ['Commercial use applicable'], highlighted: false },
+  free: { name: 'Free', localeKey: 'free', description: 'Get started with the essentials', features: ['Core dashboard panels', 'Global news feed', 'Earthquake & weather alerts', 'Basic map view', '3 dashboard tabs'], cta: 'Get Started', href: 'https://worldmonitor.app/dashboard', highlighted: false },
+  pro: { name: 'Pro', localeKey: 'pro', description: 'Full intelligence dashboard', features: ['Everything in Free', 'AI stock analysis & backtesting', 'Daily market briefs', 'Military & geopolitical tracking', 'Custom widget builder', '10 custom dashboards (vs 3)', 'MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)', 'Priority data refresh'], highlightFeatures: ['Personal license'], highlighted: true },
+  pro_business: { name: 'Pro Business', localeKey: 'proBusiness', description: 'The Pro dashboard, licensed for work', features: ['Everything in Pro', 'Use for client work, internal tools & reporting', 'Data export — CSV, JSON & PDF reports', '25 custom dashboards (vs 10)', 'MCP + SDK: 250 calls/day (vs 50)', 'Priority support'], highlightFeatures: ['Commercial license included'], highlighted: false },
+  api_starter: { name: 'API Starter', localeKey: 'api', description: 'Build internal tools on live intelligence data', features: ['REST API + official SDKs (npm, PyPI, RubyGems, Go)', 'License / API key included', 'Real-time data streams', '60 requests/minute', '1,000 requests/day included', 'Webhook notifications'], highlightFeatures: ['Commercial license — for your organization'], highlighted: false },
+  api_business: { name: 'API Business', localeKey: 'apiBusiness', description: 'Launch your own product on WorldMonitor data', features: ['Everything in API Starter', 'Redistribution rights — embed our data in what you sell', '300 requests/minute', '10,000 requests/day included', '5 Pro licenses included', 'Priority support'], highlightFeatures: ['Commercial license — for your customers'], highlighted: false },
   enterprise: { name: 'Enterprise', localeKey: 'enterprise', description: 'Custom solutions for organizations', features: ['Everything in Pro + API', 'Unlimited API requests', 'Dedicated support', 'Custom integrations', 'SLA guarantee', 'On-premise option'], cta: 'Contact Sales', href: 'mailto:enterprise@worldmonitor.app', highlighted: false },
 };
 
 const DODO_PRODUCT_META = {
   'pdt_0Nbtt71uObulf7fGXhQup': { tierGroup: 'pro', billingPeriod: 'monthly' },
   'pdt_0NbttMIfjLWC10jHQWYgJ': { tierGroup: 'pro', billingPeriod: 'annual' },
+  'pdt_PLACEHOLDER_PB_MONTHLY': { tierGroup: 'pro_business', billingPeriod: 'monthly' },
+  'pdt_PLACEHOLDER_PB_ANNUAL': { tierGroup: 'pro_business', billingPeriod: 'annual' },
   'pdt_0NbttVmG1SERrxhygbbUq': { tierGroup: 'api_starter', billingPeriod: 'monthly' },
   'pdt_0Nbu2lawHYE3dv2THgSEV': { tierGroup: 'api_starter', billingPeriod: 'annual' },
   'pdt_0Nbttg7NuOJrhbyBGCius': { tierGroup: 'api_business', billingPeriod: 'monthly' },
@@ -6674,6 +6679,8 @@ const DODO_PRODUCT_META = {
 const DODO_FALLBACK_PRICES = {
   'pdt_0Nbtt71uObulf7fGXhQup': 3999,
   'pdt_0NbttMIfjLWC10jHQWYgJ': 39999,
+  'pdt_PLACEHOLDER_PB_MONTHLY': 6999,
+  'pdt_PLACEHOLDER_PB_ANNUAL': 69999,
   'pdt_0NbttVmG1SERrxhygbbUq': 9999,
   'pdt_0Nbu2lawHYE3dv2THgSEV': 99900,
   'pdt_0Nbttg7NuOJrhbyBGCius': 29999,
@@ -6744,7 +6751,7 @@ async function seedDodoPrices() {
 
     // Build tier view model
     const tiers = [];
-    const publicGroups = ['free', 'pro', 'api_starter', 'api_business', 'enterprise'];
+    const publicGroups = ['free', 'pro', 'pro_business', 'api_starter', 'api_business', 'enterprise'];
     for (const group of publicGroups) {
       const config = DODO_TIER_CONFIG[group];
       if (!config) continue;

@@ -24,7 +24,8 @@
           "Core dashboard panels",
           "Global news feed",
           "Earthquake & weather alerts",
-          "Basic map view"
+          "Basic map view",
+          "3 dashboard tabs"
         ],
         "cta": "Get Started"
       },
@@ -36,12 +37,30 @@
           "Daily market briefs",
           "Military & geopolitical tracking",
           "Custom widget builder",
+          "10 custom dashboards (vs 3)",
           "MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)",
           "Priority data refresh"
+        ],
+        "highlightFeatures": [
+          "Personal license"
+        ]
+      },
+      "proBusiness": {
+        "description": "The Pro dashboard, licensed for work",
+        "features": [
+          "Everything in Pro",
+          "Use for client work, internal tools & reporting",
+          "Data export — CSV, JSON & PDF reports",
+          "25 custom dashboards (vs 10)",
+          "MCP + SDK: 250 calls/day (vs 50)",
+          "Priority support"
+        ],
+        "highlightFeatures": [
+          "Commercial license included"
         ]
       },
       "api": {
-        "description": "Programmatic access to intelligence data",
+        "description": "Build internal tools on live intelligence data",
         "features": [
           "REST API + official SDKs (npm, PyPI, RubyGems, Go)",
           "License / API key included",
@@ -51,21 +70,21 @@
           "Webhook notifications"
         ],
         "highlightFeatures": [
-          "No commercial use"
+          "Commercial license — for your organization"
         ]
       },
       "apiBusiness": {
-        "description": "High-volume API for teams",
+        "description": "Launch your own product on WorldMonitor data",
         "features": [
           "Everything in API Starter",
+          "Redistribution rights — embed our data in what you sell",
           "300 requests/minute",
           "10,000 requests/day included",
           "5 Pro licenses included",
-          "Same company email required",
           "Priority support"
         ],
         "highlightFeatures": [
-          "Commercial use applicable"
+          "Commercial license — for your customers"
         ]
       },
       "enterprise": {

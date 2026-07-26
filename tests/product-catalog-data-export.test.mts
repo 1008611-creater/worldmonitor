@@ -47,13 +47,16 @@ describe('U1 — Pro Business catalog entries', () => {
     assert.equal(PRODUCT_CATALOG.pro_business_annual.priceCents, 69999);
   });
 
-  it('is purchasable but invisible on /pro until U7 flips visibility', () => {
+  it('is purchasable and published on /pro (U7 flipped visibility)', () => {
     for (const planKey of PRO_BUSINESS_KEYS) {
       const entry = PRODUCT_CATALOG[planKey];
       assert.ok(entry, `${planKey} must exist in the catalog`);
       assert.equal(entry.tierGroup, 'pro_business');
-      assert.equal(entry.publicVisible, false, `${planKey} stays hidden until U7`);
+      assert.equal(entry.publicVisible, true, `${planKey} must stay on the public pricing surfaces`);
       assert.equal(entry.currentForCheckout, true, `${planKey} must be purchasable`);
+      // Separate Dodo products, not an updatable collection — the customer
+      // portal cannot perform Pro → Pro Business, so the plan-limit CTA must
+      // not point at it (guided cancel-then-rebuy copy instead).
       assert.equal(entry.canChangePlanSelfServe, false, `${planKey} has no self-serve plan change`);
     }
   });

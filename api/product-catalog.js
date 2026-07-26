@@ -28,7 +28,7 @@ const DODO_API_KEY = process.env.DODO_API_KEY ?? '';
 const DODO_ENV = process.env.DODO_PAYMENTS_ENVIRONMENT ?? 'test_mode';
 const RELAY_SECRET = process.env.RELAY_SHARED_SECRET ?? '';
 
-const CACHE_KEY = 'product-catalog:v2';
+const CACHE_KEY = 'product-catalog:v3';
 const CACHE_TTL = 3600; // 1 hour
 
 // Product IDs and their catalog metadata (non-price fields).
@@ -36,6 +36,8 @@ const CACHE_TTL = 3600; // 1 hour
 const CATALOG = {
   'pdt_0Nbtt71uObulf7fGXhQup': { planKey: 'pro_monthly', tierGroup: 'pro', billingPeriod: 'monthly' },
   'pdt_0NbttMIfjLWC10jHQWYgJ': { planKey: 'pro_annual', tierGroup: 'pro', billingPeriod: 'annual' },
+  'pdt_PLACEHOLDER_PB_MONTHLY': { planKey: 'pro_business_monthly', tierGroup: 'pro_business', billingPeriod: 'monthly' },
+  'pdt_PLACEHOLDER_PB_ANNUAL': { planKey: 'pro_business_annual', tierGroup: 'pro_business', billingPeriod: 'annual' },
   'pdt_0NbttVmG1SERrxhygbbUq': { planKey: 'api_starter', tierGroup: 'api_starter', billingPeriod: 'monthly' },
   'pdt_0Nbu2lawHYE3dv2THgSEV': { planKey: 'api_starter_annual', tierGroup: 'api_starter', billingPeriod: 'annual' },
   'pdt_0Nbttg7NuOJrhbyBGCius': { planKey: 'api_business', tierGroup: 'api_business', billingPeriod: 'monthly' },
@@ -54,7 +56,7 @@ const TIER_CONFIG = {
     name: 'Free',
     localeKey: 'free',
     description: 'Get started with the essentials',
-    features: ['Core dashboard panels', 'Global news feed', 'Earthquake & weather alerts', 'Basic map view'],
+    features: ['Core dashboard panels', 'Global news feed', 'Earthquake & weather alerts', 'Basic map view', '3 dashboard tabs'],
     cta: 'Get Started',
     href: 'https://worldmonitor.app/dashboard',
     highlighted: false,
@@ -63,23 +65,32 @@ const TIER_CONFIG = {
     name: 'Pro',
     localeKey: 'pro',
     description: 'Full intelligence dashboard',
-    features: ['Everything in Free', 'AI stock analysis & backtesting', 'Daily market briefs', 'Military & geopolitical tracking', 'Custom widget builder', 'MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)', 'Priority data refresh'],
+    features: ['Everything in Free', 'AI stock analysis & backtesting', 'Daily market briefs', 'Military & geopolitical tracking', 'Custom widget builder', '10 custom dashboards (vs 3)', 'MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)', 'Priority data refresh'],
+    highlightFeatures: ['Personal license'],
     highlighted: true,
+  },
+  pro_business: {
+    name: 'Pro Business',
+    localeKey: 'proBusiness',
+    description: 'The Pro dashboard, licensed for work',
+    features: ['Everything in Pro', 'Use for client work, internal tools & reporting', 'Data export — CSV, JSON & PDF reports', '25 custom dashboards (vs 10)', 'MCP + SDK: 250 calls/day (vs 50)', 'Priority support'],
+    highlightFeatures: ['Commercial license included'],
+    highlighted: false,
   },
   api_starter: {
     name: 'API Starter',
     localeKey: 'api',
-    description: 'Programmatic access to intelligence data',
+    description: 'Build internal tools on live intelligence data',
     features: ['REST API + official SDKs (npm, PyPI, RubyGems, Go)', 'License / API key included', 'Real-time data streams', '60 requests/minute', '1,000 requests/day included', 'Webhook notifications'],
-    highlightFeatures: ['No commercial use'],
+    highlightFeatures: ['Commercial license — for your organization'],
     highlighted: false,
   },
   api_business: {
     name: 'API Business',
     localeKey: 'apiBusiness',
-    description: 'High-volume API for teams',
-    features: ['Everything in API Starter', '300 requests/minute', '10,000 requests/day included', '5 Pro licenses included', 'Same company email required', 'Priority support'],
-    highlightFeatures: ['Commercial use applicable'],
+    description: 'Launch your own product on WorldMonitor data',
+    features: ['Everything in API Starter', 'Redistribution rights — embed our data in what you sell', '300 requests/minute', '10,000 requests/day included', '5 Pro licenses included', 'Priority support'],
+    highlightFeatures: ['Commercial license — for your customers'],
     highlighted: false,
   },
   enterprise: {
@@ -94,7 +105,7 @@ const TIER_CONFIG = {
 };
 
 // Tier groups shown on the /pro page (ordered)
-const PUBLIC_TIER_GROUPS = ['free', 'pro', 'api_starter', 'api_business', 'enterprise'];
+const PUBLIC_TIER_GROUPS = ['free', 'pro', 'pro_business', 'api_starter', 'api_business', 'enterprise'];
 
 function json(body, status, cors, cacheControl, source) {
   return new Response(JSON.stringify(body), {
@@ -122,7 +133,7 @@ async function getFromCache() {
     if (!res.ok) return null;
     const { result } = await res.json();
     if (!result) return null;
-    // Envelope-aware: ais-relay now writes `product-catalog:v2` as {_seed, data}
+    // Envelope-aware: ais-relay now writes `product-catalog:v3` as {_seed, data}
     // (PR #3097). Return the bare payload so clients see the legacy
     // {tiers, fetchedAt, cachedUntil, priceSource} shape. Pre-contract bare
     // values pass through unchanged.

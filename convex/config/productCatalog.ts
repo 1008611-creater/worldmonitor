@@ -272,6 +272,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
       "Global news feed",
       "Earthquake & weather alerts",
       "Basic map view",
+      "3 dashboard tabs",
     ],
     selfServe: false,
     highlighted: false,
@@ -293,9 +294,11 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
       "Daily market briefs",
       "Military & geopolitical tracking",
       "Custom widget builder",
+      "10 custom dashboards (vs 3)",
       "MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)",
       "Priority data refresh",
     ],
+    highlightFeatures: ["Personal license"],
     selfServe: true,
     highlighted: true,
     currentForCheckout: true,
@@ -321,8 +324,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     // PLACEHOLDER — no such product exists in Dodo. Replaced with the real
     // product ID before launch (activation runbook, plan 2026-07-25-001).
     // Reaching checkout with this ID is a launch-sequencing bug, not a
-    // supported path; `publicVisible: false` keeps it off every pricing
-    // surface until U7.
+    // supported path.
     dodoProductId: "pdt_PLACEHOLDER_PB_MONTHLY",
     planKey: "pro_business_monthly",
     displayName: "Pro Business Monthly",
@@ -332,12 +334,13 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     features: PRO_BUSINESS_FEATURES,
     marketingFeatures: [
       "Everything in Pro",
-      "Data export (CSV, JSON, PDF)",
-      "25 custom dashboards",
-      "MCP + SDK access for Claude Desktop & other AI clients (250 calls/day)",
+      "Use for client work, internal tools & reporting",
+      "Data export — CSV, JSON & PDF reports",
+      "25 custom dashboards (vs 10)",
+      "MCP + SDK: 250 calls/day (vs 50)",
       "Priority support",
     ],
-    highlightFeatures: ["Commercial use applicable"],
+    highlightFeatures: ["Commercial license included"],
     selfServe: true,
     highlighted: false,
     currentForCheckout: true,
@@ -345,9 +348,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     // subscription-updatable collection — the customer portal cannot perform
     // the change, so the plan-limit CTA must not point at it.
     canChangePlanSelfServe: false,
-    // Flipped public in U7, together with the generator's tierGroup maps,
-    // both catalog mirrors, and the pricing-page copy.
-    publicVisible: false,
+    publicVisible: true,
   },
 
   pro_business_annual: {
@@ -364,7 +365,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     highlighted: false,
     currentForCheckout: true,
     canChangePlanSelfServe: false,
-    publicVisible: false,
+    publicVisible: true,
   },
 
   api_starter: {
@@ -383,7 +384,7 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
       "1,000 requests/day included",
       "Webhook notifications",
     ],
-    highlightFeatures: ["No commercial use"],
+    highlightFeatures: ["Commercial license — for your organization"],
     selfServe: true,
     highlighted: false,
     currentForCheckout: true,
@@ -419,13 +420,15 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     features: API_BUSINESS_FEATURES,
     marketingFeatures: [
       "Everything in API Starter",
+      "Redistribution rights — embed our data in what you sell",
       "300 requests/minute",
       "10,000 requests/day included",
       "5 Pro licenses included",
-      "Same company email required",
       "Priority support",
     ],
-    highlightFeatures: ["Commercial use applicable"],
+    // "Same company email required" dropped from the card (#5604): it is a
+    // requirement, not a benefit. Server-side enforcement is unchanged.
+    highlightFeatures: ["Commercial license — for your customers"],
     // Published + self-serve since #4945 (bet B4): the tier existed in the
     // billing system but was invisible on every pricing surface and had
     // zero customers. Starter→Business upgrades for existing subscribers
