@@ -45,7 +45,7 @@ import { getStoredMapModePreference } from '@/services/map-mode-preference';
 import { loadWidgets, saveWidget, isProUser } from '@/services/widget-store';
 import type { CustomWidgetSpec } from '@/services/widget-store';
 import { initEntitlementSubscription, destroyEntitlementSubscription, isEntitled, hasTier, getEntitlementState, onEntitlementChange, shouldReloadOnEntitlementChange } from '@/services/entitlements';
-import { initSubscriptionWatch, destroySubscriptionWatch, onSubscriptionChange, openBillingPortal, prereserveBillingPortalTab } from '@/services/billing';
+import { initSubscriptionWatch, destroySubscriptionWatch, onSubscriptionChange } from '@/services/billing';
 import { initPaymentFailureBanner } from '@/components/payment-failure-banner';
 import { handleCheckoutReturn } from '@/services/checkout-return';
 import { registerCheckoutSuccessCallback, destroyCheckoutOverlay, showCheckoutSuccess, consumePostCheckoutFlag, clearCheckoutAttempt, loadCheckoutAttempt } from '@/services/checkout';
@@ -67,7 +67,7 @@ import { loadMcpPanels, saveMcpPanel } from '@/services/mcp-store';
 import type { McpPanelSpec } from '@/services/mcp-store';
 import { getAuthState, subscribeAuthState } from '@/services/auth-state';
 import type { AuthSession } from '@/services/auth-state';
-import { PanelGateReason, getPanelGateReason, hasPremiumAccess, resolveBillingAwareGateReason } from '@/services/panel-gating';
+import { PanelGateReason, getPanelGateReason, hasPremiumAccess, resolveBillingAwareGateReason, resolveGateAction } from '@/services/panel-gating';
 import { markLcpDebug } from '@/utils/lcp-debug';
 import type { Panel } from '@/components/Panel';
 import type { SupplyChainPanel } from '@/components/SupplyChainPanel';
@@ -744,36 +744,11 @@ export class PanelLayoutManager implements AppModule {
         (panel as Panel).unlockPanel();
       } else {
         // User does NOT have access -- show appropriate CTA
-        const onAction = this.getGateAction(reason);
+        const onAction = resolveGateAction(reason, {
+          openAuthModal: () => this.ctx.authModal?.open(),
+        });
         (panel as Panel).showGatedCta(reason, onAction);
       }
-    }
-  }
-
-  /** Return the action callback for a given gate reason. */
-  private getGateAction(reason: PanelGateReason): () => void {
-    switch (reason) {
-      case PanelGateReason.ANONYMOUS:
-        return () => this.ctx.authModal?.open();
-      case PanelGateReason.FREE_TIER:
-        return () => window.open('https://worldmonitor.app/pro', '_blank', 'noopener,noreferrer');
-      case PanelGateReason.PAYMENT_ON_HOLD:
-      case PanelGateReason.RENEWAL_FAILED:
-        // Pre-reserve the portal tab synchronously inside the click gesture
-        // so the async portal-session fetch survives the popup blocker
-        // (same pattern as payment-failure-banner.ts).
-        return () => {
-          const reservedWin = prereserveBillingPortalTab();
-          void openBillingPortal(reservedWin);
-        };
-      case PanelGateReason.RENEWAL_PENDING:
-        // Verification resolves server-side; a reload re-pulls entitlements
-        // for users who don't want to wait for the reactive update.
-        return () => window.location.reload();
-      case PanelGateReason.LAPSED:
-        return () => window.open('https://worldmonitor.app/pro', '_blank', 'noopener,noreferrer');
-      default:
-        return () => {};
     }
   }
 
