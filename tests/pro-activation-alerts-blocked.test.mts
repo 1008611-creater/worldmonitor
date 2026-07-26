@@ -557,6 +557,45 @@ describe('activation interstitial blocked transition (#5609)', () => {
     );
   });
 
+  // `defaultOutcome` classifies steps the user has NOT reached yet, and every
+  // other test here mounts a single step, so this look-ahead never ran. It
+  // matters: permission is already denied at mount, so the alerts step is
+  // genuinely blocked before the subscriber ever sees it, and a progress
+  // snapshot written while they are still on step 1 must say so rather than
+  // pre-labelling it a voluntary skip.
+  it('classifies a not-yet-reached mount-blocked step as blocked in progress snapshots', async () => {
+    installPushState('denied', true);
+    activeDom = installDom();
+    const mod = await loadInterstitial();
+    const dom = activeDom!;
+    const progress: Array<Array<{ id: string; outcome: string }>> = [];
+    mod.openProActivationInterstitial({
+      steps: [
+        { id: 'brief', state: 'confirmable' },
+        { id: 'alerts', state: 'blocked' },
+        { id: 'power', state: 'confirmable' },
+      ],
+      accountEmail: 'pro@worldmonitor.test',
+      onConfirmStep: (async () => 'verified') as never,
+      onSkipStep: () => {},
+      onBlockStep: () => {},
+      onProgress: (results) => progress.push(results as never),
+      onExit: () => {},
+    });
+    activeClose = mod.closeProActivationInterstitial;
+
+    // Confirm step 1 only. Steps 2 and 3 are still unvisited.
+    const primary = dom.document.body.querySelector('.pro-activation-primary');
+    primary!.dispatchEvent(new Event('click'));
+    await new Promise<void>((r) => setImmediate(r));
+
+    assert.deepEqual(progress[0], [
+      { id: 'brief', outcome: 'confirmed' },
+      { id: 'alerts', outcome: 'blocked' },
+      { id: 'power', outcome: 'skipped' },
+    ]);
+  });
+
   it('keeps the pre-denied copy for a step already blocked at mount', async () => {
     installPushState('denied', true);
     activeDom = installDom();
