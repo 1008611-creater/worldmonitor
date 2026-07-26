@@ -64,6 +64,7 @@ interface CapturedOutcomeCall {
   activationKey: string;
   claimNonce: string;
   outcome: {
+    cohort?: 'day0';
     confirmedSteps: string[];
     skippedSteps: string[];
     /** Browser-refused steps (#5617); present-and-empty when nothing was blocked. */
@@ -497,6 +498,204 @@ test.describe('Pro activation flow — markerless first-cycle handoff', () => {
     expect(result).toEqual({ result: 'retry', claimCalls: 1, confirmCalls: 0 });
     await expect(page.locator(OVERLAY)).toHaveCount(0);
     expect(await readCapturedOutcomes(page)).toEqual([]);
+  });
+});
+
+type Day0Status = 'opened' | 'already_recorded' | 'not_eligible';
+
+/**
+ * Drive the REAL day-0 (post-checkout) flow: `onlyIfUnactivated: false`, with
+ * the subscription identity the controller now supplies for both cohorts.
+ */
+async function runDay0FlowHarness(
+  page: Page,
+  input: {
+    day0Status?: Day0Status;
+    day0Throws?: boolean;
+    day0NeverResolves?: boolean;
+    day0ResolveAfterMs?: number;
+  } = {},
+): Promise<{ result: string; claimCalls: number; confirmCalls: number; day0Calls: number }> {
+  return await page.evaluate(async (scenario) => {
+    const { initI18n } = await import('/src/services/i18n.ts');
+    await initI18n();
+    const mod = await import('/src/components/ProActivationInterstitial.ts');
+    const w = window as unknown as {
+      __proOutcomeCalls: CapturedOutcomeCall[];
+      __proOutcomeAttempts: number;
+    };
+    w.__proOutcomeCalls = [];
+    w.__proOutcomeAttempts = 0;
+    let claimCalls = 0;
+    let confirmCalls = 0;
+    let day0Calls = 0;
+    const result = await mod.openProActivationFlow(
+      {
+        accountUserId: 'day0-user',
+        accountEmail: 'day0@worldmonitor.app',
+        onlyIfUnactivated: false,
+        expectedActivationKey: 'opaque-subscription',
+        activationClaimNonce: 'tab-nonce',
+        isAccountCurrent: () => true,
+      },
+      {
+        readContext: async () => ({
+          config: {
+            hasVerifiedEmailChannel: false,
+            hasEmailDelivery: false,
+            hasEnabledDigestRule: false,
+            hasTunedDigestHour: false,
+            hasWebPushChannel: false,
+            hasWebPushDelivery: false,
+            hasUsedPowerFeature: false,
+          },
+          capabilities: { webPushSupported: false },
+          channels: [],
+          channelsKnown: true,
+          hasEnabledRule: false,
+        }),
+        claimPresentation: async () => {
+          claimCalls += 1;
+          return 'claimed';
+        },
+        confirmPresentation: async () => {
+          confirmCalls += 1;
+          return true;
+        },
+        openDay0Presentation: async () => {
+          day0Calls += 1;
+          if (scenario.day0NeverResolves) return await new Promise<never>(() => {});
+          if (scenario.day0Throws) throw new Error('day-0 record transport failed');
+          if (scenario.day0ResolveAfterMs !== undefined) {
+            await new Promise<void>((resolve) => setTimeout(resolve, scenario.day0ResolveAfterMs));
+          }
+          return scenario.day0Status ?? 'opened';
+        },
+        recordOutcome: async (activationKey, claimNonce, outcome) => {
+          w.__proOutcomeAttempts += 1;
+          w.__proOutcomeCalls.push({ activationKey, claimNonce, outcome });
+          return true;
+        },
+        operationTimeoutMs: 200,
+      },
+    );
+    return { result, claimCalls, confirmCalls, day0Calls };
+  }, input);
+}
+
+test.describe('Pro activation flow — day-0 outcome rows (#5621)', () => {
+  test.beforeEach(async ({ page }) => {
+    await gotoHarness(page);
+  });
+
+  test('day-0 opens its own record and persists cohort-tagged outcome snapshots', async ({ page }) => {
+    // Before #5621 the day-0 path ran with no activation key or nonce, so
+    // persistActivationOutcomeWithRetry returned early and the entire
+    // post-checkout cohort was absent from Convex.
+    const result = await runDay0FlowHarness(page);
+    expect(result).toEqual({ result: 'opened', claimCalls: 0, confirmCalls: 0, day0Calls: 1 });
+    await expect(page.locator(OVERLAY)).toBeVisible();
+
+    await page.locator('.pro-activation-close').click();
+    await expect(page.locator(SUMMARY)).toBeVisible();
+    await page.locator(FINISH_BTN).click();
+
+    await expect.poll(async () => (await readCapturedOutcomes(page)).length).toBe(2);
+    expect(await readCapturedOutcomes(page)).toEqual([
+      {
+        activationKey: 'opaque-subscription',
+        claimNonce: 'tab-nonce',
+        outcome: {
+          cohort: 'day0',
+          confirmedSteps: [],
+          skippedSteps: ['brief', 'power'],
+          // Same full-replacement contract the markerless snapshots pin
+          // (#5617): the day-0 payload carries every bucket, so the cohort tag
+          // rides alongside them rather than replacing any.
+          blockedSteps: [],
+          failedSteps: [],
+          revision: 1,
+          finalized: false,
+        },
+      },
+      {
+        activationKey: 'opaque-subscription',
+        claimNonce: 'tab-nonce',
+        outcome: {
+          cohort: 'day0',
+          confirmedSteps: [],
+          skippedSteps: ['brief', 'power'],
+          blockedSteps: [],
+          failedSteps: [],
+          revision: 2,
+          finalized: true,
+        },
+      },
+    ]);
+  });
+
+  test('day-0 never touches the markerless claim/confirm lease', async ({ page }) => {
+    // The lease is what makes the retro backfill fire exactly once per
+    // subscription. Day-0 borrowing it would consume that budget and lock the
+    // subscriber out of the backfill they may still need (#5600).
+    const result = await runDay0FlowHarness(page);
+    expect(result.claimCalls).toBe(0);
+    expect(result.confirmCalls).toBe(0);
+  });
+
+  test('a late successful day-0 open still flushes queued finalized snapshots', async ({ page }) => {
+    const result = await runDay0FlowHarness(page, { day0ResolveAfterMs: 350 });
+    expect(result.result).toBe('opened');
+    await expect(page.locator(OVERLAY)).toBeVisible();
+
+    // Both snapshots are queued before the open resolves, and after the 200ms
+    // observation deadline. A timeout warning must not turn that eventual
+    // server success into a permanent refusal.
+    await page.locator('.pro-activation-close').click();
+    await expect(page.locator(SUMMARY)).toBeVisible();
+    await page.locator(FINISH_BTN).click();
+
+    await expect.poll(async () => (await readCapturedOutcomes(page)).length).toBe(2);
+    expect((await readCapturedOutcomes(page)).map(({ outcome }) => ({
+      revision: outcome.revision,
+      finalized: outcome.finalized,
+    }))).toEqual([
+      { revision: 1, finalized: false },
+      { revision: 2, finalized: true },
+    ]);
+  });
+
+  test.describe('a refused or unreachable day-0 record never blocks the welcome flow', () => {
+    for (const [name, scenario] of [
+      ['server refuses (already finalized)', { day0Status: 'already_recorded' as const }],
+      ['server refuses (ineligible)', { day0Status: 'not_eligible' as const }],
+      ['transport throws', { day0Throws: true }],
+      ['transport hangs past the deadline', { day0NeverResolves: true }],
+    ] as const) {
+      test(name, async ({ page }) => {
+        const result = await runDay0FlowHarness(page, scenario);
+        // Post-checkout onboarding is the product; the ledger is telemetry.
+        // It must open regardless, and never return the 'retry' that the
+        // markerless path uses when its lease is in doubt.
+        expect(result.result).toBe('opened');
+        await expect(page.locator(OVERLAY)).toBeVisible();
+
+        await page.locator('.pro-activation-close').click();
+        await expect(page.locator(SUMMARY)).toBeVisible();
+        await page.locator(FINISH_BTN).click();
+        await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+        // Outlast the 200ms observation deadline. A never-resolving readiness
+        // promise stays pending, but neither blocks the UI nor attempts a
+        // write against a row that does not exist.
+        await page.waitForTimeout(400);
+
+        // No row to attach to → snapshots are dropped rather than written
+        // against a row this session does not own.
+        expect(await readCapturedOutcomes(page)).toEqual([]);
+        expect(await readOutcomeAttempts(page)).toBe(0);
+      });
+    }
   });
 });
 

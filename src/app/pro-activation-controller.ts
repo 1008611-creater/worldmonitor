@@ -414,9 +414,17 @@ export class ProActivationController implements AppModule {
     if (decision !== 'show') return;
 
     const flowOptions = this.buildFlowOptions();
-    if (!flowOptions) return;
+    const subscriptionKey = deriveSubscriptionKey(subscription);
+    if (!flowOptions || subscriptionKey === null) return;
     void import('@/components/ProActivationChip')
-      .then((module) => module.maybeShowFinishSetupChip(flowOptions))
+      .then((module) =>
+        module.maybeShowFinishSetupChip({
+          ...flowOptions,
+          onlyIfUnactivated: false,
+          expectedActivationKey: subscriptionKey,
+          activationClaimNonce: generateMountClaimNonce(),
+        }),
+      )
       .catch((error) => console.warn('[pro-activation] finish-setup chip failed to load', error));
   }
 
@@ -547,8 +555,12 @@ export class ProActivationController implements AppModule {
       const result = await module.openProActivationFlow({
         ...flowOptions,
         onlyIfUnactivated,
-        expectedActivationKey: onlyIfUnactivated ? subscriptionKey : undefined,
-        activationClaimNonce: onlyIfUnactivated ? this.mountNonce : undefined,
+        // Both cohorts carry the identity now (#5621). The markerless path uses
+        // it for its cross-device lease; the day-0 path uses it only to attach
+        // outcomes to a server-side row, which is why day-0 previously ran with
+        // these undefined and left its cohort invisible in Convex.
+        expectedActivationKey: subscriptionKey,
+        activationClaimNonce: this.mountNonce,
       });
       // The interstitial may already be rendered by this point (opened
       // synchronously inside openProActivationFlow before it resolves). If

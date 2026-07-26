@@ -174,6 +174,7 @@ async function loadInterstitial(): Promise<InterstitialModule> {
     ['billing-stub', `
       export async function claimProActivationPresentation() { return 'claimed'; }
       export async function confirmProActivationPresentation() { return true; }
+      export async function openProActivationDay0Presentation() { return 'opened'; }
       export async function recordProActivationOutcome() { return true; }
     `],
     ['channels-stub', `
@@ -757,6 +758,43 @@ describe('durable activation outcome carries the blocked bucket (#5617)', () => 
     assert.equal(sentry.length, 1, 'a permanent failure must reach Sentry exactly once');
     const { ctx } = sentry[0] as { ctx: { tags: Record<string, string> } };
     assert.deepEqual(ctx.tags, { component: 'pro-activation', action: 'recordOutcome' });
+  });
+
+  it('reports a rejected day-0 row open once without blocking the welcome flow', async () => {
+    installPushState('denied', true);
+    const mod = await loadInterstitial();
+    let captured: Parameters<InterstitialModule['openProActivationInterstitial']>[0] | null = null;
+
+    const opened = await mod.openProActivationFlow(
+      {
+        accountUserId: 'user_alerts',
+        accountEmail: 'pro@worldmonitor.test',
+        isAccountCurrent: () => true,
+        onlyIfUnactivated: false,
+        expectedActivationKey: 'sub_activation_key',
+        activationClaimNonce: 'device-a',
+      },
+      {
+        readContext: async () => activationContext(),
+        openDay0Presentation: async () => {
+          throw new Error('day-0 row rejected');
+        },
+        openInterstitial: (interstitialOptions) => {
+          captured = interstitialOptions;
+        },
+      },
+    );
+    await new Promise<void>((r) => setImmediate(r));
+
+    assert.equal(opened, 'opened', 'durable telemetry failure must not block onboarding');
+    assert.ok(captured, 'the welcome interstitial must still open');
+    const sentry = (globalThis as Record<string, unknown[]>).__alertsSentry!;
+    assert.equal(sentry.length, 1, 'the rejected open must reach Sentry exactly once');
+    const { ctx } = sentry[0] as { ctx: { tags: Record<string, string> } };
+    assert.deepEqual(ctx.tags, {
+      component: 'pro-activation',
+      action: 'openDay0Presentation',
+    });
   });
 
   it('sends an explicit empty blockedSteps when nothing was blocked', async () => {
