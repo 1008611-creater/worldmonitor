@@ -26,8 +26,12 @@ import type { PipelineFn, QuotaRejected, QuotaReserved } from './types';
  * `planLimits`, NaN/Infinity, a negative, a stringified number — resolves to
  * `PRO_DAILY_QUOTA_LIMIT`. That direction is deliberate: an unreadable limit
  * must never buy a caller a HIGHER cap than the plan default.
+ *
+ * Exported because the settings-UI reader (`api/user/mcp-quota.ts`) must DISPLAY
+ * exactly the limit this module ENFORCES. A second copy of this normalisation
+ * would be the drift the endpoint's whole reason for existing is to prevent.
  */
-function resolveDailyLimit(planDailyLimit?: number | null): number | null {
+export function resolveDailyLimit(planDailyLimit?: number | null): number | null {
   if (planDailyLimit === null) return null;
   if (typeof planDailyLimit === 'number' && Number.isFinite(planDailyLimit) && planDailyLimit >= 0) {
     return planDailyLimit;
