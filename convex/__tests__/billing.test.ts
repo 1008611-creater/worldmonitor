@@ -3118,6 +3118,42 @@ describe("payments billing missed renewal reconciliation", () => {
     expect(entitlement?.planKey).toBe("enterprise");
   });
 
+  test("resolves a catalog-known but UNSEEDED product id to its own plan key, not the enterprise fallback", async () => {
+    // resolvePlanKey's enterprise over-grant is for products our CODE has
+    // never heard of. A product that IS in PRODUCT_CATALOG but has not been
+    // seeded into productPlans yet (every launch of a new tier opens that
+    // window) must resolve to its own plan key — handing a $69.99 Pro
+    // Business buyer an Enterprise entitlement is a real over-grant, and the
+    // catalog already knows the right answer.
+    const t = convexTest(schema, modules);
+    const remotePeriodEnd = NOW + 30 * DAY_MS;
+    await seedStaleActiveForReconcile(t, { suffix: "unseeded_catalog_product" });
+
+    const summary = await t.action(
+      internal.payments.billing.reconcileMissedDodoRenewals,
+      {
+        now: NOW,
+        remoteSubscriptionsForTest: [
+          {
+            subscription_id: "sub_unseeded_catalog_product",
+            product_id: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+            status: "active",
+            previous_billing_date: new Date(NOW).toISOString(),
+            next_billing_date: new Date(remotePeriodEnd).toISOString(),
+          },
+        ],
+      },
+    );
+
+    expect(summary).toMatchObject({ inspected: 1, reconciled: 1, skipped: 0, failed: 0 });
+
+    const sub = await readSub(t, "unseeded_catalog_product");
+    const entitlement = await readEntitlement(t, TEST_USER_ID);
+    expect(sub?.planKey).toBe("pro_business_monthly");
+    expect(entitlement?.planKey).toBe("pro_business_monthly");
+    expect(entitlement?.features.apiAccess).toBe(false);
+  });
+
   test("skips an unsupported remote status, escalates, and backs the row off", async () => {
     const t = convexTest(schema, modules);
     const stalePeriodEnd = NOW - DAY_MS;

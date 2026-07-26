@@ -51,11 +51,13 @@ export type PlanFeatures = {
   planLimits?: PlanLimits;
   prioritySupport: boolean;
   /**
-   * Display/entitlement metadata ONLY — as of #4974 NO code consumes this
-   * array to gate any behavior, and formats listed here are not guaranteed
-   * to have exporters ("xlsx" was advertised for months with zero
-   * implementation). Do NOT gate features on it without building the
-   * exporter first.
+   * Display metadata ONLY — the formats a tier ADVERTISES. As of #4974 NO
+   * code consumes this array to gate any behavior, and formats listed here
+   * are not guaranteed to have exporters ("xlsx" was advertised for months
+   * with zero implementation). The enforcement field for data export is
+   * `dataExport` below: gate on that, never on this array's contents or
+   * length. Keep the two in agreement — a tier with `dataExport: false`
+   * advertises nothing.
    */
   exportFormats: string[];
   /**
@@ -84,6 +86,22 @@ export type PlanFeatures = {
    * ALWAYS set the field explicitly.
    */
   apiDailyAllowance?: number;
+  /**
+   * Data-export entitlement — the ENFORCEMENT field for CSV/JSON/PDF export
+   * (plan 2026-07-25-001). Distinct from `exportFormats`, which only says
+   * what a tier advertises. `tier` cannot stand in for it: Pro Business
+   * shares `tier: 1` with Pro but exports, and Pro does not.
+   *
+   * Optional for the same reason as `apiDailyAllowance`: rows written before
+   * the field existed omit it. Consumers treat `undefined` on a `tier >= 2`
+   * row as **entitled (fail-OPEN)**, and that allowance is PERMANENT, not a
+   * migration window — the 15-min server-side entitlement cache
+   * (`server/_shared/entitlement-check.ts`) does not key its staleness check
+   * on this field, so a stale row must never lock a paying customer out of
+   * their own data. `undefined` below tier 2 is NOT entitled. Catalog
+   * entries below ALWAYS set the field explicitly.
+   */
+  dataExport?: boolean;
 };
 
 export interface CatalogEntry {
@@ -128,8 +146,9 @@ const FREE_FEATURES: PlanFeatures = {
     mcpBurstRequestsPerMinute: 0,
   },
   prioritySupport: false,
-  exportFormats: ["csv"],
+  exportFormats: [],
   mcpAccess: false,
+  dataExport: false,
 };
 
 const PRO_FEATURES: PlanFeatures = {
@@ -145,8 +164,38 @@ const PRO_FEATURES: PlanFeatures = {
     mcpBurstRequestsPerMinute: 60,
   },
   prioritySupport: false,
-  exportFormats: ["csv", "pdf"],
+  exportFormats: [],
   mcpAccess: true,
+  dataExport: false,
+};
+
+/**
+ * Pro Business (plan 2026-07-25-001) — the commercial-use Pro variant.
+ *
+ * Deliberately `tier: 1` (same as Pro) so every existing Pro gate unlocks
+ * generically, and deliberately `apiAccess: false` so it cannot leak `wm_…`
+ * API-key issuance. What separates it from Pro is carried by named fields:
+ * `dataExport`, `maxDashboards`, `prioritySupport`, and the MCP daily
+ * allowance. Because it shares a tier with Pro, BOTH billing variants need
+ * their own `PLAN_PRECEDENCE` entry below or the recompute tie-break
+ * degrades to `currentPeriodEnd` and can hand a buyer the weaker Pro row.
+ */
+const PRO_BUSINESS_FEATURES: PlanFeatures = {
+  tier: 1,
+  maxDashboards: 25,
+  apiAccess: false,
+  apiRateLimit: 0,
+  apiDailyAllowance: 0,
+  planLimits: {
+    apiRequestsPerDay: 0,
+    apiBurstRequestsPerMinute: 0,
+    mcpCallsPerDay: 250,
+    mcpBurstRequestsPerMinute: 60,
+  },
+  prioritySupport: true,
+  exportFormats: ["csv", "json", "pdf"],
+  mcpAccess: true,
+  dataExport: true,
 };
 
 const API_STARTER_FEATURES: PlanFeatures = {
@@ -162,8 +211,9 @@ const API_STARTER_FEATURES: PlanFeatures = {
     mcpBurstRequestsPerMinute: 60,
   },
   prioritySupport: false,
-  exportFormats: ["csv", "pdf", "json"],
+  exportFormats: ["csv", "json", "pdf"],
   mcpAccess: true,
+  dataExport: true,
 };
 
 const API_BUSINESS_FEATURES: PlanFeatures = {
@@ -180,8 +230,9 @@ const API_BUSINESS_FEATURES: PlanFeatures = {
   },
   prioritySupport: true,
   // xlsx removed (#4974): no XLSX exporter exists anywhere in the product.
-  exportFormats: ["csv", "pdf", "json"],
+  exportFormats: ["csv", "json", "pdf"],
   mcpAccess: true,
+  dataExport: true,
 };
 
 const ENTERPRISE_FEATURES: PlanFeatures = {
@@ -197,8 +248,11 @@ const ENTERPRISE_FEATURES: PlanFeatures = {
     mcpBurstRequestsPerMinute: 1000,
   },
   prioritySupport: true,
-  exportFormats: ["csv", "pdf", "json", "xlsx", "api-stream"],
+  // xlsx + api-stream removed for the same reason xlsx left API Business
+  // (#4974): neither has an exporter, and this array is display truth.
+  exportFormats: ["csv", "json", "pdf"],
   mcpAccess: true,
+  dataExport: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -261,6 +315,56 @@ export const PRODUCT_CATALOG: Record<string, CatalogEntry> = {
     highlighted: true,
     currentForCheckout: true,
     publicVisible: true,
+  },
+
+  pro_business_monthly: {
+    // PLACEHOLDER — no such product exists in Dodo. Replaced with the real
+    // product ID before launch (activation runbook, plan 2026-07-25-001).
+    // Reaching checkout with this ID is a launch-sequencing bug, not a
+    // supported path; `publicVisible: false` keeps it off every pricing
+    // surface until U7.
+    dodoProductId: "pdt_PLACEHOLDER_PB_MONTHLY",
+    planKey: "pro_business_monthly",
+    displayName: "Pro Business Monthly",
+    priceCents: 6999,
+    billingPeriod: "monthly",
+    tierGroup: "pro_business",
+    features: PRO_BUSINESS_FEATURES,
+    marketingFeatures: [
+      "Everything in Pro",
+      "Data export (CSV, JSON, PDF)",
+      "25 custom dashboards",
+      "MCP + SDK access for Claude Desktop & other AI clients (250 calls/day)",
+      "Priority support",
+    ],
+    highlightFeatures: ["Commercial use applicable"],
+    selfServe: true,
+    highlighted: false,
+    currentForCheckout: true,
+    // Pro and Pro Business are separate Dodo products, not a
+    // subscription-updatable collection — the customer portal cannot perform
+    // the change, so the plan-limit CTA must not point at it.
+    canChangePlanSelfServe: false,
+    // Flipped public in U7, together with the generator's tierGroup maps,
+    // both catalog mirrors, and the pricing-page copy.
+    publicVisible: false,
+  },
+
+  pro_business_annual: {
+    // PLACEHOLDER — see pro_business_monthly.
+    dodoProductId: "pdt_PLACEHOLDER_PB_ANNUAL",
+    planKey: "pro_business_annual",
+    displayName: "Pro Business Annual",
+    priceCents: 69999,
+    billingPeriod: "annual",
+    tierGroup: "pro_business",
+    features: PRO_BUSINESS_FEATURES,
+    marketingFeatures: [],
+    selfServe: true,
+    highlighted: false,
+    currentForCheckout: true,
+    canChangePlanSelfServe: false,
+    publicVisible: false,
   },
 
   api_starter: {
@@ -404,6 +508,11 @@ export const PLAN_PRECEDENCE: Record<string, number> = {
   free: 0,
   pro_monthly: 10,
   pro_annual: 11, // longer commitment outranks monthly at same tier
+  // Pro Business shares tier 1 with Pro, so these entries are the ONLY thing
+  // that stops a recompute from handing a Pro Business buyer who also holds a
+  // Pro sub the weaker Pro feature set.
+  pro_business_monthly: 12,
+  pro_business_annual: 13,
   api_starter: 20,
   api_starter_annual: 21,
   api_business: 30, // higher capability than api_starter at same tier 2

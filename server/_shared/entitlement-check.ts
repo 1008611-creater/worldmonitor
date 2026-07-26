@@ -57,6 +57,15 @@ export interface CachedEntitlements {
      * that reason (forcing a re-fetch would contradict fail-open).
      */
     apiDailyAllowance?: number;
+    /**
+     * Data-export entitlement (plan 2026-07-25-001) — the enforcement field
+     * for CSV/JSON/PDF export. Like `apiDailyAllowance` and unlike
+     * `mcpAccess`, consumers treat `undefined` on a `tier >= 2` row as
+     * **entitled (fail-OPEN)**, and deliberately NOT added to the
+     * cache-staleness gate below — which is exactly why that fail-open is
+     * permanent rather than a migration window.
+     */
+    dataExport?: boolean;
   };
   validUntil: number;
   billingStatus?: BillingVerificationStatus;

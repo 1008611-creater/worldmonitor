@@ -44,12 +44,17 @@ function makeEntitlements(tier: number, planKey = "free") {
       apiRateLimit: tier >= 2 ? 60 : 0,
       maxDashboards: tier >= 1 ? 10 : 3,
       prioritySupport: tier >= 2,
-      exportFormats: tier >= 2 ? ["csv", "pdf", "json"] : ["csv"],
+      exportFormats: tier >= 2 ? ["csv", "json", "pdf"] : [],
       // Plan 2026-05-10-001 U10 added mcpAccess to the feature set. Cache
       // entries lacking this field are now treated as stale by
       // _getEntitlementsImpl (round-2 P2-cache fix), so test fixtures
       // must include it to be considered fresh.
       mcpAccess: tier >= 1,
+      // Plan 2026-07-25-001 U1 added dataExport. Mirrors the catalog for the
+      // tiers this factory can express — Pro Business also exports at tier 1,
+      // but it is not reachable through a tier-only fixture. Deliberately NOT
+      // part of the cache-staleness gate (undefined fail-opens at tier >= 2).
+      dataExport: tier >= 2,
     },
     validUntil: FUTURE,
   };
