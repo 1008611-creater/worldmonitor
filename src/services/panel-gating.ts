@@ -5,9 +5,11 @@ import { getEntitlementState } from './entitlements';
 import {
   isExportGateActive,
   resolveExportGate,
+  resolveTabCap,
   type ExportGateInputs,
   type ExportGateLockReason,
   type ExportGateVerdict,
+  type TabCapVerdict,
 } from './export-gate';
 import { getSecretState } from './runtime-config';
 import { isProUser } from './widget-store';
@@ -109,8 +111,9 @@ export function exportLockToGateReason(reason: ExportGateLockReason): PanelGateR
 }
 
 /**
- * Snapshot the live inputs of the data-export gate (plan 2026-07-25-001, KTD2).
- * The decision itself lives in the pure `resolveExportGate` leaf so it can be
+ * Snapshot the live inputs of the data-export gate (plan 2026-07-25-001, KTD2)
+ * and the dashboard tab cap (KTD8) — one reactive read shared by both.
+ * The decisions themselves live in the pure `export-gate` leaf so they can be
  * unit-tested without a DOM; this function only reads the reactive sources.
  */
 export function readExportGateInputs(authState: AuthSession): ExportGateInputs {
@@ -121,7 +124,11 @@ export function readExportGateInputs(authState: AuthSession): ExportGateInputs {
     authPending: authState.isPending,
     signedIn: Boolean(authState.user),
     features: entitlement
-      ? { tier: entitlement.features.tier, dataExport: entitlement.features.dataExport }
+      ? {
+          tier: entitlement.features.tier,
+          dataExport: entitlement.features.dataExport,
+          maxDashboards: entitlement.features.maxDashboards,
+        }
       : null,
     billingState: deriveBillingUxState(getSubscription(), entitlement, Date.now()),
   };
@@ -130,6 +137,14 @@ export function readExportGateInputs(authState: AuthSession): ExportGateInputs {
 /** Current data-export verdict for the given auth session. */
 export function evaluateExportGate(authState: AuthSession): ExportGateVerdict {
   return resolveExportGate(readExportGateInputs(authState));
+}
+
+/**
+ * May this session create another dashboard tab? Creation-only — the verdict
+ * never asks a caller to remove tabs that already exist (KTD8).
+ */
+export function evaluateTabCap(authState: AuthSession, currentTabCount: number): TabCapVerdict {
+  return resolveTabCap(readExportGateInputs(authState), currentTabCount);
 }
 
 /**

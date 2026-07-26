@@ -1,8 +1,10 @@
 /**
- * Data-export gate (plan 2026-07-25-001, KTD2).
+ * Data-export gate (plan 2026-07-25-001, KTD2) and dashboard tab cap (KTD8).
  *
  * Pure decision chain for the dashboard + country-brief data exports, plus the
- * catalog-activation probe that decides whether the gate exists at all.
+ * catalog-activation probe that decides whether the gate exists at all. The tab
+ * cap is a sibling resolver over the SAME inputs and the SAME activation
+ * signal, so the two takeaways can never disagree about who is entitled.
  *
  * Why a dedicated resolver instead of `hasFeature('dataExport')`: that helper
  * coerces `undefined → false` (src/services/entitlements.ts:163), i.e. it FAILS
@@ -33,7 +35,7 @@ export type ExportGateLockReason =
   | 'renewal_failed'
   | 'lapsed';
 
-/** The two entitlement fields the chain reads, from a LOADED snapshot. */
+/** The entitlement fields the two chains read, from a LOADED snapshot. */
 export interface ExportGateFeatures {
   tier: number;
   /**
@@ -42,6 +44,13 @@ export interface ExportGateFeatures {
    * fail-open below.
    */
   dataExport?: boolean;
+  /**
+   * Per-plan dashboard allowance (KTD8). Required in the schema, the cache
+   * validator and the client type, so unlike `dataExport` there is no legacy
+   * fail-open branch — but a stored row may lag the catalog, and the cap
+   * deliberately tracks the row. `-1` is the catalog's unlimited sentinel.
+   */
+  maxDashboards: number;
 }
 
 export interface ExportGateInputs {
@@ -111,6 +120,78 @@ export function resolveExportGate(input: ExportGateInputs): ExportGateVerdict {
   if (reason === null) return { locked: false, pendingActivation: false };
   if (!input.gateActive) return { locked: false, pendingActivation: true };
   return { locked: true, reason };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard tab cap (KTD8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dashboard allowance applied to users we affirmatively know are unentitled —
+ * i.e. signed-out visitors, who have no entitlement row to read. Mirrors
+ * `FREE_FEATURES.maxDashboards` in convex/config/productCatalog.ts; the drift
+ * guard lives in tests/tab-cap.test.mts.
+ */
+export const FREE_TAB_CAP = 3;
+
+export type TabCapVerdict =
+  | {
+      allowed: true;
+      /** Resolved allowance, or null when this state is uncapped. */
+      cap: number | null;
+      /** See ExportGateVerdict.pendingActivation — same lazy-probe contract. */
+      pendingActivation: boolean;
+    }
+  | { allowed: false; cap: number; reason: ExportGateLockReason };
+
+const UNCAPPED: TabCapVerdict = { allowed: true, cap: null, pendingActivation: false };
+
+function decideTabCap(
+  input: ExportGateInputs,
+  currentTabCount: number,
+  cap: number,
+  reason: ExportGateLockReason,
+): TabCapVerdict {
+  if (currentTabCount < cap) return { allowed: true, cap, pendingActivation: false };
+  if (!input.gateActive) return { allowed: true, cap, pendingActivation: true };
+  return { allowed: false, cap, reason };
+}
+
+/**
+ * May this session create ANOTHER dashboard tab? Creation-only by construction:
+ * the verdict carries no removal instruction, so a user sitting above their cap
+ * (plan downgrade, allowance lowered, tabs created during a null-snapshot
+ * window) keeps every tab they already have.
+ *
+ * The chain's first four steps are `resolveExportLock`'s verbatim — every step
+ * above the snapshot check is an "unknown", and an unknown is never capped:
+ *   1. desktop API key → uncapped
+ *   2. auth pending    → uncapped
+ *   3. signed out      → the free cap, denied with the anonymous reason
+ *   4. no snapshot     → uncapped (re-evaluated on the next entitlement event)
+ *   5. loaded snapshot → `features.maxDashboards`, refined by billing state so
+ *      a customer with stale paid evidence sees "update payment", not an upsell
+ */
+export function resolveTabCap(input: ExportGateInputs, currentTabCount: number): TabCapVerdict {
+  if (input.desktopKeyPresent) return UNCAPPED;
+  if (input.authPending) return UNCAPPED;
+  if (!input.signedIn) return decideTabCap(input, currentTabCount, FREE_TAB_CAP, 'anonymous');
+
+  const features = input.features;
+  if (features === null) return UNCAPPED;
+
+  const cap = features.maxDashboards;
+  // `-1` is the catalog's unlimited sentinel (Enterprise). A non-numeric value
+  // can only come from a malformed row — the type says required — and an
+  // unknown allowance must never cap anyone.
+  if (!Number.isFinite(cap) || cap < 0) return UNCAPPED;
+
+  return decideTabCap(
+    input,
+    currentTabCount,
+    cap,
+    getBillingGateOverride(input.billingState) ?? 'free_tier',
+  );
 }
 
 // ---------------------------------------------------------------------------
