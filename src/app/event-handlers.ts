@@ -1735,6 +1735,7 @@ export class EventHandlerManager implements AppModule {
     // entitled, a single locked row (reason + CTA) otherwise.
     let lockedControl: ExportGateControl | null = null;
     let lockedReason: PanelGateReason | null = null;
+    let isUnlocked = false;
 
     // Created up front and empty: an aria-live region only announces content
     // injected AFTER it is in the accessibility tree.
@@ -1750,6 +1751,7 @@ export class EventHandlerManager implements AppModule {
     };
 
     const showLocked = (reason: PanelGateReason): void => {
+      isUnlocked = false;
       const panelEl = this.ctx.exportPanel?.getElement();
       if (panelEl) panelEl.style.display = 'none';
       lockedReason = reason;
@@ -1771,6 +1773,12 @@ export class EventHandlerManager implements AppModule {
 
     const unlock = (): void => {
       const wasLocked = lockedControl !== null;
+      // Change-detection guard: gating re-fires on every auth AND entitlement
+      // emission, most with an unchanged verdict — skip the re-import/DOM
+      // write when already unlocked (same pattern as Panel.showGatedCta's
+      // repeat-verdict skip).
+      if (!wasLocked && isUnlocked) return;
+      isUnlocked = true;
       removeLockedControl();
       void ensureExportPanel()
         .then((panel) => {
@@ -1785,6 +1793,9 @@ export class EventHandlerManager implements AppModule {
           if (wasLocked) liveRegion.textContent = t('components.exportGate.unlockedAnnouncement');
         })
         .catch((err) => {
+          // Allow the next emission to retry the import — the guard above
+          // must not latch an unlocked state the chunk never delivered.
+          isUnlocked = false;
           console.warn('[export-panel] Failed to lazy-load ExportPanel:', err);
         });
     };

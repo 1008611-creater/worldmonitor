@@ -3,7 +3,7 @@ import { t } from '@/services/i18n';
 import { PanelGateReason } from '@/services/panel-gating';
 import { lockSvg, upgradeSvg } from '@/components/gate-icons';
 import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
-import type { GateCopy } from '@/components/ExportGateControl';
+import { billingAwareGateCopy, type GateCopy } from '@/components/ExportGateControl';
 
 export interface PanelTabBarCallbacks {
   onSelect(tabId: string): void;
@@ -29,28 +29,20 @@ export interface TabAddLock {
  * Business, 25 → Enterprise.
  */
 export function tabCapGateCopy(reason: PanelGateReason, cap: number): GateCopy {
-  switch (reason) {
-    case PanelGateReason.ANONYMOUS:
-      return {
-        icon: lockSvg,
-        desc: t('components.tabCap.signedOutDesc', { cap: String(cap) }),
-        cta: t('premium.signIn'),
-      };
-    case PanelGateReason.PAYMENT_ON_HOLD:
-      return { icon: lockSvg, desc: t('components.billingState.onHoldDesc'), cta: t('components.billingState.updatePayment') };
-    case PanelGateReason.RENEWAL_PENDING:
-      return { icon: lockSvg, desc: t('components.billingState.renewalPendingDesc'), cta: t('components.billingState.refreshStatus') };
-    case PanelGateReason.RENEWAL_FAILED:
-      return { icon: lockSvg, desc: t('components.billingState.renewalFailedDesc'), cta: t('components.billingState.manageBilling') };
-    case PanelGateReason.LAPSED:
-      return { icon: upgradeSvg, desc: t('components.billingState.lapsedDesc'), cta: t('components.billingState.resubscribe') };
-    default:
-      return {
-        icon: upgradeSvg,
-        desc: t('components.tabCap.upgradeDesc', { cap: String(cap) }),
-        cta: t('components.tabCap.upgradeCta'),
-      };
+  const billing = billingAwareGateCopy(reason);
+  if (billing) return billing;
+  if (reason === PanelGateReason.ANONYMOUS) {
+    return {
+      icon: lockSvg,
+      desc: t('components.tabCap.signedOutDesc', { cap: String(cap) }),
+      cta: t('premium.signIn'),
+    };
   }
+  return {
+    icon: upgradeSvg,
+    desc: t('components.tabCap.upgradeDesc', { cap: String(cap) }),
+    cta: t('components.tabCap.upgradeCta'),
+  };
 }
 
 /**
@@ -151,6 +143,17 @@ export class PanelTabBar {
    */
   setAddLock(lock: TabAddLock | null): void {
     const wasLocked = this.addLock !== null;
+    // Change-detection guard: gating re-fires on every auth/entitlement/
+    // subscription emission, most with an unchanged verdict (same pattern as
+    // Panel.showGatedCta's repeat-verdict skip).
+    if (
+      wasLocked === (lock !== null) &&
+      lock?.copy.desc === this.addLock?.copy.desc &&
+      lock?.copy.cta === this.addLock?.copy.cta
+    ) {
+      this.addLock = lock;
+      return;
+    }
     this.addLock = lock;
     this.applyAddLock();
     if (wasLocked && lock === null) {

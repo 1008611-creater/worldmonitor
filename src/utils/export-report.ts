@@ -228,7 +228,16 @@ export interface DataReportOptions {
  * `exportToJSON` / `exportToCSV`.
  */
 export function buildDataReportDocument(data: ExportData, options: DataReportOptions = {}): string {
-  const clean = sanitizeExportData(data);
+  // The report renders at most MAX_NEWS_ROWS / MAX_CLUSTER_ROWS of each list
+  // and never reads newsByCategory, so sanitize only what it renders. The
+  // JSON/CSV exporters keep the full-fidelity `sanitizeExportData` — they
+  // serialize everything.
+  const clean: ExportData = {
+    ...data,
+    news: data.news?.slice(0, MAX_NEWS_ROWS).map(sanitizeNewsItem),
+    newsClusters: data.newsClusters?.slice(0, MAX_CLUSTER_ROWS).map(sanitizeCluster),
+    newsByCategory: undefined,
+  };
   const generatedAt = options.generatedAt
     ?? clean.meta?.exportedAt
     ?? isoOrEmpty(clean.timestamp)

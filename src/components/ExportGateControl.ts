@@ -24,15 +24,14 @@ export interface GateCopy {
 }
 
 /**
- * Export-specific copy, shaped exactly like `Panel.gatedCtaEntry` so the two
- * locked surfaces read the same. The billing-aware reasons reuse the
- * `components.billingState.*` strings the payment banner and panel CTAs use —
- * a customer with paid evidence must never see a fresh upsell.
+ * The four billing-aware branches every locked surface shares — a customer
+ * with paid evidence must never see a fresh upsell, so these reuse the same
+ * `components.billingState.*` strings as the payment banner and panel CTAs
+ * (`Panel.gatedCtaEntry`). Returns null for the reasons each surface must
+ * resolve with its own copy (ANONYMOUS and the free-tier default).
  */
-export function exportGateCopy(reason: PanelGateReason): GateCopy {
+export function billingAwareGateCopy(reason: PanelGateReason): GateCopy | null {
   switch (reason) {
-    case PanelGateReason.ANONYMOUS:
-      return { icon: lockSvg, desc: t('components.exportGate.signedOutDesc'), cta: t('premium.signIn') };
     case PanelGateReason.PAYMENT_ON_HOLD:
       return { icon: lockSvg, desc: t('components.billingState.onHoldDesc'), cta: t('components.billingState.updatePayment') };
     case PanelGateReason.RENEWAL_PENDING:
@@ -42,8 +41,18 @@ export function exportGateCopy(reason: PanelGateReason): GateCopy {
     case PanelGateReason.LAPSED:
       return { icon: upgradeSvg, desc: t('components.billingState.lapsedDesc'), cta: t('components.billingState.resubscribe') };
     default:
-      return { icon: upgradeSvg, desc: t('components.exportGate.upgradeDesc'), cta: t('components.exportGate.upgradeCta') };
+      return null;
   }
+}
+
+/** Export-specific copy: shared billing-aware branches plus this surface's own sign-in/upgrade cases. */
+export function exportGateCopy(reason: PanelGateReason): GateCopy {
+  const billing = billingAwareGateCopy(reason);
+  if (billing) return billing;
+  if (reason === PanelGateReason.ANONYMOUS) {
+    return { icon: lockSvg, desc: t('components.exportGate.signedOutDesc'), cta: t('premium.signIn') };
+  }
+  return { icon: upgradeSvg, desc: t('components.exportGate.upgradeDesc'), cta: t('components.exportGate.upgradeCta') };
 }
 
 export interface ExportGateControlOptions {

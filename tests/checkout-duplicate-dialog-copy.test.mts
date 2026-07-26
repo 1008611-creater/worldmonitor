@@ -64,3 +64,33 @@ describe('buildDuplicateSubscriptionBody', () => {
     assert.ok(body.startsWith('Your account already has an active Pro subscription.'));
   });
 });
+
+describe('cross-app copy parity (dashboard dialog vs /pro dialog)', () => {
+  // pro-test/ is a sealed Vite app with no import path back to src/, so its
+  // proDuplicateBodyHtml hand-mirrors buildDuplicateSubscriptionBody. This
+  // guard pins the load-bearing shared sentences in BOTH sources so the two
+  // surfaces cannot silently diverge (same pattern as the i18n/docs-stats
+  // parity gates).
+  const SHARED_SENTENCES = [
+    'Pro Business is a separate plan, so the upgrade takes two steps',
+    "you don't have to wait for your current term to end",
+    'Pro Business starts a new billing cycle as soon as you buy it',
+    'support@worldmonitor.app',
+  ];
+
+  it('both dialog sources carry the guided-upgrade sentences', async () => {
+    // Dashboard: assert the RENDERED body (its source splits sentences across
+    // concatenated literals). /pro: source-substring — the sealed app cannot
+    // be imported here, and its copy is a single template literal.
+    const dashboardBody = buildDuplicateSubscriptionBody({
+      planDisplayName: 'Pro',
+      isProBusinessUpgrade: true,
+    });
+    const { readFile } = await import('node:fs/promises');
+    const proSrc = await readFile('pro-test/src/services/checkout.ts', 'utf8');
+    for (const sentence of SHARED_SENTENCES) {
+      assert.ok(dashboardBody.includes(sentence), `dashboard dialog lost: "${sentence}"`);
+      assert.ok(proSrc.includes(sentence), `/pro dialog lost: "${sentence}"`);
+    }
+  });
+});

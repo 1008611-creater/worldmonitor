@@ -9561,19 +9561,25 @@ a.prediction-link:hover {
   max-width: 240px;
 }
 
-.export-locked-icon {
+/* Shared by both compact locked surfaces (export menu row + tab-cap notice)
+   so the gold treatment can't drift between them. Surface-specific layout
+   stays with each surface's own block. */
+.export-locked-icon,
+.tab-cap-notice-icon {
   color: #d4a843;
   filter: drop-shadow(0 0 8px rgba(212, 168, 67, 0.3));
   line-height: 0;
 }
 
-.export-locked-desc {
+.export-locked-desc,
+.tab-cap-notice-desc {
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-dim, #888);
 }
 
-.export-locked-cta {
+.export-locked-cta,
+.tab-cap-notice-cta {
   padding: 6px 14px;
   font-size: 11px;
   font-weight: 600;
@@ -9586,7 +9592,8 @@ a.prediction-link:hover {
   transition: filter 0.15s;
 }
 
-.export-locked-cta:hover {
+.export-locked-cta:hover,
+.tab-cap-notice-cta:hover {
   filter: brightness(1.15);
 }
 
@@ -26307,34 +26314,10 @@ body.map-width-resizing {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-.tab-cap-notice-icon {
-  color: #d4a843;
-  filter: drop-shadow(0 0 8px rgba(212, 168, 67, 0.3));
-  line-height: 0;
-}
-
+/* Gold icon/desc/CTA treatment shared with the export locked row — see the
+   grouped .export-locked-* / .tab-cap-notice-* rules near .export-locked-state. */
 .tab-cap-notice-desc {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-dim, #888);
-}
-
-.tab-cap-notice-cta {
-  padding: 6px 14px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: #111;
-  background: linear-gradient(135deg, #d4a843 0%, #b8902e 100%);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: filter 0.15s;
-}
-
-.tab-cap-notice-cta:hover {
-  filter: brightness(1.15);
 }
 
 /* ── Notification channel cards (relocated from settings-window.css in PR #4385 follow-up) ──
