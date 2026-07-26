@@ -50,6 +50,10 @@ describe('blog conversion attribution', () => {
     assert.doesNotMatch(base, /#waitlist|Get Early Access/);
     assert.match(base, /Explore Pro/);
     assert.match(base, /TrackedProductLink/);
+    assert.match(
+      base,
+      /data-domains="[^"]*\bwww\.worldmonitor\.app\b[^"]*"/,
+    );
     assert.match(trackedLink, /BLOG_CONVERSION_EVENT/);
     assert.match(trackedLink, /data-umami-event-source/);
     assert.match(trackedLink, /data-umami-event-medium/);
