@@ -6,7 +6,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isTransientComtrade, fetchBilateral, __setSleepForTests } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
+import { isTransientComtrade, fetchBilateral, recentPeriod, __setSleepForTests } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
 import { fetchFlows, checkCoverage, KEY_PREFIX, __setSleepForTests as __setFlowsSleep } from '../scripts/seed-trade-flows.mjs';
 import { fetchImportsForReporter, __setSleepForTests as __setHhiSleep } from '../scripts/seed-recovery-import-hhi.mjs';
 
@@ -66,6 +66,18 @@ test('fetchBilateral: uses the stable HS API route while metadata tracks HS2022'
   await fetchBilateral('699', ['2709']);
 
   assert.match(new URL(fetchCalls[0]).pathname, /^\/(?:public\/v1\/preview|data\/v1\/get)\/C\/A\/HS$/);
+});
+
+test('recentPeriod: pins the safely-final year and rolls forward at the UTC year boundary', () => {
+  assert.equal(recentPeriod(new Date('2026-07-02T00:00:00Z')), '2024');
+  // Still the old pin one second before the UTC new year...
+  assert.equal(recentPeriod(new Date('2026-12-31T23:59:59Z')), '2024');
+  // ...and it rolls forward the instant the year turns. This is the cliff that
+  // makes a reporter which has not yet filed the new (y-2) year come back
+  // HTTP 200 with zero rows, so any period-fallback work must key off it.
+  assert.equal(recentPeriod(new Date('2027-01-01T00:00:00Z')), '2025');
+  // An explicit lag stays independent of the default.
+  assert.equal(recentPeriod(new Date('2027-01-01T00:00:00Z'), 3), '2024');
 });
 
 test('fetchBilateral: requests an explicit safely-final annual period', async () => {

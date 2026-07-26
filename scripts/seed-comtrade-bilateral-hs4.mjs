@@ -140,10 +140,8 @@ export async function checkSeedMetaFreshness(now = Date.now()) {
 }
 
 /**
- * @param {string} reporterCode
- * @param {string[]} hs4Batch
- * @param {string} [period]
- * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
+ * @param {number} status
+ * @returns {boolean}
  */
 // Comtrade's API regularly returns transient 5xx (500/502/503/504) on otherwise
 // valid reporter fetches — observed 2026-04-14 with India (699) 503×2 and
@@ -183,6 +181,7 @@ function buildFetchUrl(reporterCode, hs4Batch, key, period) {
  *
  * @param {string} reporterCode
  * @param {string[]} hs4Batch
+ * @param {string} [period]
  * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
  */
 export async function fetchBilateral(reporterCode, hs4Batch, period = recentPeriod()) {

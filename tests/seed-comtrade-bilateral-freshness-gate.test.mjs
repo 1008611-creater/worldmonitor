@@ -128,15 +128,30 @@ test('health freshness budgets cover the monthly Railway cadence without masking
   const compactHealth = readFileSync(join(root, 'api', 'health.js'), 'utf8');
   const seedHealth = readFileSync(join(root, 'api', 'seed-health.js'), 'utf8');
 
-  assert.match(
-    compactHealth,
-    /comtradeBilateralHs4:\s*\{[^}]*maxStaleMin:\s*50400\s*\}/,
-    'compact health must allow 35 days for the monthly Comtrade HS4 seed',
+  // Capture the numbers and assert the RELATIONSHIP rather than pinning two
+  // literals. Pinned literals let a future cadence change update both files
+  // and this test in lockstep while silently breaking the invariant that
+  // seed-health warns before compact health times out.
+  const maxStaleMatch = compactHealth.match(
+    /comtradeBilateralHs4:\s*\{[^}]*maxStaleMin:\s*(\d+)\s*\}/,
   );
-  assert.match(
-    seedHealth,
-    /'comtrade:bilateral-hs4':\s*\{[^}]*intervalMin:\s*25200\s*\}/,
-    'seed-health intervalMin*2 must match the 35-day compact-health budget',
+  const intervalMatch = seedHealth.match(
+    /'comtrade:bilateral-hs4':\s*\{[^}]*intervalMin:\s*(\d+)\s*\}/,
+  );
+  assert.ok(maxStaleMatch, 'compact health must register comtradeBilateralHs4 with a maxStaleMin');
+  assert.ok(intervalMatch, 'seed-health must register comtrade:bilateral-hs4 with an intervalMin');
+
+  const maxStaleMin = Number(maxStaleMatch[1]);
+  const intervalMin = Number(intervalMatch[1]);
+
+  assert.ok(
+    maxStaleMin >= 35 * 24 * 60,
+    `compact health must allow >=35 days for the monthly Comtrade HS4 seed (got ${maxStaleMin} min)`,
+  );
+  assert.equal(
+    intervalMin * 2,
+    maxStaleMin,
+    `seed-health intervalMin*2 (${intervalMin * 2}) must equal the compact-health budget (${maxStaleMin})`,
   );
 });
 
