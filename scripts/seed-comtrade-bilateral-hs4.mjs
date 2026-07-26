@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 
 const META_KEY = 'seed-meta:comtrade:bilateral-hs4';
 const KEY_PREFIX = 'comtrade:bilateral-hs4:';
-const TTL_SECONDS = 259200; // 72h
+const TTL_SECONDS = 3456000; // 40d: monthly cadence + 9d deploy/missed-tick slack
 const LOCK_DOMAIN = 'comtrade:bilateral-hs4';
 const LOCK_TTL_MS = 30 * 60 * 1000; // 30 min
 
@@ -42,8 +42,13 @@ export const FRESHNESS_GATE_MS = 24 * 24 * 60 * 60 * 1000;
 // days 9-24 unprotected — if the cron ever flipped back to daily, those
 // 15 days would burn ~6,000 calls against the 500/mo quota.
 //
-// Formula: gate + 1 day buffer (absorbs clock skew + one missed tick).
-export const SEED_META_TTL_SECONDS = Math.ceil(FRESHNESS_GATE_MS / 1000) + 86_400;
+// Keep metadata for the same 40-day continuity window as the country shards.
+// Health turns stale at 35d, leaving five days where a missed run is visible
+// as STALE_SEED while the last good country payloads remain queryable.
+export const SEED_META_TTL_SECONDS = Math.max(
+  TTL_SECONDS,
+  Math.ceil(FRESHNESS_GATE_MS / 1000) + 86_400,
+);
 
 const COMTRADE_KEYS = (process.env.COMTRADE_API_KEYS || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
@@ -56,11 +61,18 @@ function getNextKey() {
 
 const usePublicApi = COMTRADE_KEYS.length === 0;
 const STRATEGIC_PRODUCT_METADATA = require('./shared/comtrade-strategic-products.json');
-const COMTRADE_CLASSIFICATION_CODE = STRATEGIC_PRODUCT_METADATA.classification.code;
+const COMTRADE_API_CLASSIFIER = 'HS'; // API route family; metadata tracks the active H6/HS2022 revision separately.
 const COMTRADE_FETCH_URL = usePublicApi
-  ? `https://comtradeapi.un.org/public/v1/preview/C/A/${COMTRADE_CLASSIFICATION_CODE}`
-  : `https://comtradeapi.un.org/data/v1/get/C/A/${COMTRADE_CLASSIFICATION_CODE}`;
+  ? `https://comtradeapi.un.org/public/v1/preview/C/A/${COMTRADE_API_CLASSIFIER}`
+  : `https://comtradeapi.un.org/data/v1/get/C/A/${COMTRADE_API_CLASSIFIER}`;
 const INTER_REQUEST_DELAY_MS = usePublicApi ? 3500 : 1500;
+
+// Comtrade annual data lags across reporters. Without an explicit period the
+// API currently returns HTTP 200 with count=0, so every country is silently
+// dropped. Pin the newest safely-final year, matching seed-trade-flows.mjs.
+export function recentPeriod(now = new Date(), lag = 2) {
+  return String(now.getUTCFullYear() - lag);
+}
 
 const BILATERAL_PRODUCTS = STRATEGIC_PRODUCT_METADATA.products.filter((product) => product.bilateralHs4Code);
 const HS4_CODES = Array.from(new Set(BILATERAL_PRODUCTS.map((product) => product.bilateralHs4Code)));
@@ -130,6 +142,7 @@ export async function checkSeedMetaFreshness(now = Date.now()) {
 /**
  * @param {string} reporterCode
  * @param {string[]} hs4Batch
+ * @param {string} [period]
  * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
  */
 // Comtrade's API regularly returns transient 5xx (500/502/503/504) on otherwise
@@ -153,11 +166,12 @@ async function fetchBilateralOnce(url, timeoutMs = 45_000) {
   });
 }
 
-function buildFetchUrl(reporterCode, hs4Batch, key) {
+function buildFetchUrl(reporterCode, hs4Batch, key, period) {
   const url = new URL(COMTRADE_FETCH_URL);
   url.searchParams.set('reporterCode', reporterCode);
   url.searchParams.set('cmdCode', hs4Batch.join(','));
   url.searchParams.set('flowCode', 'M');
+  url.searchParams.set('period', period);
   if (key) url.searchParams.set('subscription-key', key);
   return url.toString();
 }
@@ -171,14 +185,14 @@ function buildFetchUrl(reporterCode, hs4Batch, key) {
  * @param {string[]} hs4Batch
  * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
  */
-export async function fetchBilateral(reporterCode, hs4Batch) {
+export async function fetchBilateral(reporterCode, hs4Batch, period = recentPeriod()) {
   let rateLimitedOnce = false;
   let transientRetries = 0;
   const MAX_TRANSIENT_RETRIES = 2;
 
   let resp;
   while (true) {
-    resp = await fetchBilateralOnce(buildFetchUrl(reporterCode, hs4Batch, getNextKey()));
+    resp = await fetchBilateralOnce(buildFetchUrl(reporterCode, hs4Batch, getNextKey(), period));
 
     if (resp.status === 429 && !rateLimitedOnce) {
       console.warn(`  429 rate-limited for reporter ${reporterCode}, waiting 60s...`);

@@ -60,6 +60,25 @@ test('fetchBilateral: succeeds on first attempt with 200', async () => {
   assert.equal(result[0].cmdCode, '2709');
 });
 
+test('fetchBilateral: uses the stable HS API route while metadata tracks HS2022', async () => {
+  fetchResponses = [{ status: 200, body: { data: [] } }];
+
+  await fetchBilateral('699', ['2709']);
+
+  assert.match(new URL(fetchCalls[0]).pathname, /^\/(?:public\/v1\/preview|data\/v1\/get)\/C\/A\/HS$/);
+});
+
+test('fetchBilateral: requests an explicit safely-final annual period', async () => {
+  fetchResponses = [{ status: 200, body: { data: [] } }];
+
+  await fetchBilateral('699', ['2709']);
+
+  assert.equal(
+    new URL(fetchCalls[0]).searchParams.get('period'),
+    String(new Date().getUTCFullYear() - 2),
+  );
+});
+
 test('fetchBilateral: retries once after a single 503, succeeds on second attempt', async () => {
   fetchResponses = [
     { status: 503, body: {} },

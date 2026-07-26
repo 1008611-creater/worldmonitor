@@ -3,13 +3,13 @@
  *
  * When `comtrade:bilateral-hs4:{iso2}:v1` is missing in Redis, this module
  * fetches the same Comtrade endpoint that `seed-comtrade-bilateral-hs4.mjs`
- * uses, writes the result to Redis with a 30-day TTL, and returns the
+ * uses, writes the result to Redis with a 40-day TTL, and returns the
  * products for immediate use by `get-route-impact`.
  *
  * Constraints:
  *   - Concurrency cap: 1 fetch at a time (Comtrade public rate ~1 req/sec)
  *   - Timeout: 5s per request (never block the response longer)
- *   - Cache both success (30d) and known-empty (24h)
+ *   - Cache both success (40d) and known-empty (24h)
  *   - On 429: return null + set a 24h negative-cache sentinel
  */
 
@@ -21,9 +21,13 @@ const COMTRADE_BASE = 'https://comtradeapi.un.org/public/v1/preview/C/A/HS';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 const KEY_PREFIX = 'comtrade:bilateral-hs4:';
 const LAZY_SENTINEL_PREFIX = 'comtrade:bilateral-hs4-lazy-sentinel:';
-const SUCCESS_TTL = 2592000; // 30 days
+const SUCCESS_TTL = 3456000; // 40 days
 const EMPTY_TTL = 86400; // 24h
 const FETCH_TIMEOUT_MS = 5000;
+
+function recentPeriod(now = new Date(), lag = 2): string {
+  return String(now.getUTCFullYear() - lag);
+}
 
 const HS4_CODES = [
   '2709', '2711', '8542', '8517', '8703', '3004', '7108', '2710',
@@ -137,6 +141,7 @@ async function fetchComtradeBilateral(reporterCode: string): Promise<ComtradeRes
   url.searchParams.set('reporterCode', reporterCode);
   url.searchParams.set('cmdCode', HS4_CODES.join(','));
   url.searchParams.set('flowCode', 'M');
+  url.searchParams.set('period', recentPeriod());
 
   const resp = await fetch(url.toString(), {
     headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },

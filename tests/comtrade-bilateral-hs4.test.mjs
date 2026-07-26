@@ -125,10 +125,11 @@ describe('Comtrade bilateral HS4 seeder (scripts/seed-comtrade-bilateral-hs4.mjs
     );
   });
 
-  it('TTL_SECONDS is 259200 (72 hours)', () => {
+  it('keeps bulk country payloads alive across the monthly Railway cadence', () => {
+    const ttlMatch = src.match(/const TTL_SECONDS = (\d+)/);
     assert.ok(
-      src.includes('TTL_SECONDS = 259200'),
-      'seeder: TTL_SECONDS must be 259200 (72h) to match the cache interval',
+      ttlMatch && Number(ttlMatch[1]) >= 35 * 86_400,
+      'seeder: TTL_SECONDS must cover a 31-day month plus at least 4 days of deploy/missed-tick slack',
     );
   });
 
@@ -272,6 +273,18 @@ describe('Comtrade bilateral HS4 lazy fallback (server/worldmonitor/supply-chain
     assert.ok(
       src.includes("scripts/shared/comtrade-reporter-overrides.json"),
       'lazy fallback: must use the shared reporter override file so NO/CH drift does not regress',
+    );
+  });
+
+  it('uses the stable HS route and an explicit safely-final annual period', () => {
+    assert.ok(
+      src.includes('/public/v1/preview/C/A/HS'),
+      'lazy fallback: must use the stable HS API route classifier',
+    );
+    assert.match(
+      src,
+      /searchParams\.set\('period',\s*recentPeriod\(\)\)/,
+      'lazy fallback: must request an explicit annual period instead of accepting a successful empty response',
     );
   });
 

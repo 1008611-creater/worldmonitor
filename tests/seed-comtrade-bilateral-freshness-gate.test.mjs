@@ -8,6 +8,8 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   checkSeedMetaFreshness,
@@ -18,6 +20,7 @@ import {
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
 const ORIGINAL_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const root = join(import.meta.dirname, '..');
 
 function mockRedisGet(value) {
   // Upstash REST /pipeline returns an array of { result } objects.
@@ -113,11 +116,27 @@ test('invariant: SEED_META_TTL_SECONDS strictly outlives FRESHNESS_GATE_MS', () 
     SEED_META_TTL_SECONDS > gateSeconds,
     `SEED_META_TTL_SECONDS (${SEED_META_TTL_SECONDS}s) must be > FRESHNESS_GATE_MS in seconds (${gateSeconds}s)`,
   );
-  // Pin the buffer too — without it the relationship is brittle to clock skew.
-  const bufferSeconds = SEED_META_TTL_SECONDS - gateSeconds;
+  // Pin the monthly continuity window too — without it seed-meta expires
+  // before the next scheduled run and compact health escalates to EMPTY.
   assert.ok(
-    bufferSeconds >= 86_400,
-    `seed-meta TTL must outlive the gate by ≥1 day for clock-skew + missed-tick slack (got ${bufferSeconds}s)`,
+    SEED_META_TTL_SECONDS >= 35 * 86_400,
+    `seed-meta TTL must cover a 31-day month plus 4 days of cron/deploy jitter (got ${SEED_META_TTL_SECONDS}s)`,
+  );
+});
+
+test('health freshness budgets cover the monthly Railway cadence without masking a missed run', () => {
+  const compactHealth = readFileSync(join(root, 'api', 'health.js'), 'utf8');
+  const seedHealth = readFileSync(join(root, 'api', 'seed-health.js'), 'utf8');
+
+  assert.match(
+    compactHealth,
+    /comtradeBilateralHs4:\s*\{[^}]*maxStaleMin:\s*50400\s*\}/,
+    'compact health must allow 35 days for the monthly Comtrade HS4 seed',
+  );
+  assert.match(
+    seedHealth,
+    /'comtrade:bilateral-hs4':\s*\{[^}]*intervalMin:\s*25200\s*\}/,
+    'seed-health intervalMin*2 must match the 35-day compact-health budget',
   );
 });
 
