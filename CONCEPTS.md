@@ -90,6 +90,12 @@ A static JSON discovery document that describes the MCP server: its name, versio
 
 The distinction that lets one URL serve both crawlers and MCP clients. A `GET` carrying neither `Last-Event-ID` nor an `Accept: text/event-stream` is a **discovery read** — a human or crawler opening the endpoint — and receives a document (the markdown server guide at `/mcp`, the JSON card at the well-known aliases). Every other `GET` is a **transport operation**: an SSE stream-open, which must receive the spec-correct `405`, or an authenticated `Last-Event-ID` replay. Request semantics, never user-agent sniffing, decide which. The consequence for caching is load-bearing: because these URLs negotiate on request headers, any cacheable response must declare `Vary: Accept, Last-Event-ID`, or a shared cache keyed on URL alone will replay a stored discovery body to a transport client. The live transport URL goes further and stays `no-store`, so its correctness never depends on an intermediary honoring `Vary`.
 
+### Credential Class
+
+One of the independent doors through which a caller reaches MCP tooling: a pro OAuth token, minted for any entitlement that clears the mint gate (a paid tier with MCP access), or a user API key, available only to plans that include API access. The classes are resolved by different code paths and carry different hardcoded assumptions, but they are not plan boundaries — an API-tier subscriber legitimately holds both.
+
+The load-bearing rule: credential class never determines plan family, so any rule stated per-plan ("API tiers keep the default cap") must discriminate on the plan key, not on which door the request came through — otherwise the other door grants what the rule withheld. Daily metering is per-user, not per-class: every class increments one shared counter because the principal is the key's owner, which means all classes a user can hold must resolve the same limit against that counter. See also: Plan Family, Entitlement.
+
 ### Streamable HTTP Transport
 
 The MCP transport this server implements over HTTP: JSON-RPC 2.0 requests via `POST`, with optional Server-Sent Events when the client advertises `Accept: text/event-stream`. Its `405` on a standalone stream-open is not an error but a contract — MCP SDK clients read it as the graceful "no standalone stream" signal and complete the handshake. Anything that converts that `405` into a `200` (including a CDN replaying a cached discovery response) breaks the handshake.
@@ -107,6 +113,10 @@ One of the product-variant subdomains (`tech`, `finance`, `commodity`, `happy`, 
 The per-user record granting feature access — a plan key, feature flags with a tier, and a validity horizon — derived from subscriptions by the server and replicated to clients as a reactive snapshot. An entitlement is evidence of paid access *now*; it says nothing about why access exists or when it will renew. When its validity horizon passes without a renewal being recorded, readers fall back to free-tier defaults, which is the moment stale local state can misrepresent a still-paying customer.
 
 Feature flags are resolved by merging the plan's catalog defaults under the stored row, so a record written before a flag existed still reports that flag's current default for its plan — "the row predates the field" is therefore never on its own a reason a capability would read as absent.
+
+### Plan Family
+
+The grouping of plan keys — pro-family (personal and business dashboard plans), API-family (programmatic-access plans), and enterprise — that billing and quota rules discriminate on. Checkout duplicate-detection, seat licensing, and quota scoping are all stated per-family, and a family is not recoverable from the tier number or from which credential a caller presents: two plans can share a tier and differ in family, and an API-family subscriber can hold pro-class credentials. Rules written against any proxy for family (tier, credential class, feature flag) will misfire on the plans where the proxy and the family diverge. See also: Credential Class, Entitlement.
 
 ### Capability-Gated Deep Link
 
