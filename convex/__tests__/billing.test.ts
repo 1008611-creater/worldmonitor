@@ -827,6 +827,186 @@ describe("payments billing duplicate-checkout guard", () => {
 
     expect(result).toBeNull();
   });
+
+  // Pro Business shares the `pro` billing family (KTD4): buying it while a Pro
+  // subscription is live must hit the duplicate dialog instead of stacking two
+  // concurrent Pro-family subscriptions ($39.99 + $69.99). The one carve-out is
+  // the upgrade direction from a CANCELLED Pro — see the carve-out tests below.
+  test("blocks a Pro Business checkout while a Pro subscription is active", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 30 * DAY_MS,
+      suffix: "pro_blocks_pro_business",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+      },
+    );
+
+    expect(result).toMatchObject({
+      planKey: "pro_monthly",
+      status: "active",
+      displayName: "Pro Monthly",
+    });
+  });
+
+  test("blocks a Pro Business checkout while an on_hold Pro subscription exists", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      status: "on_hold",
+      currentPeriodEnd: NOW + 7 * DAY_MS,
+      suffix: "on_hold_pro_blocks_pro_business",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+      },
+    );
+
+    expect(result).toMatchObject({
+      planKey: "pro_monthly",
+      status: "on_hold",
+    });
+  });
+
+  // KTD4 carve-out: cancelled-but-paid-through Pro is the tier's most likely
+  // buyer (they cancelled Pro precisely to move up). Without this, sharing the
+  // family would lock an annual subscriber out of Pro Business for months.
+  test("a cancelled-but-paid-through Pro subscription does not block a Pro Business checkout", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_annual",
+      dodoProductId: PRODUCT_CATALOG.pro_annual.dodoProductId!,
+      status: "cancelled",
+      currentPeriodEnd: NOW + 200 * DAY_MS,
+      suffix: "cancelled_pro_allows_pro_business",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+      },
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // The carve-out is upgrade-direction only: re-buying Pro itself while the
+  // cancelled Pro term is still running stays blocked (pre-existing behavior).
+  test("a cancelled-but-paid-through Pro subscription still blocks a Pro re-purchase", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_annual",
+      dodoProductId: PRODUCT_CATALOG.pro_annual.dodoProductId!,
+      status: "cancelled",
+      currentPeriodEnd: NOW + 200 * DAY_MS,
+      suffix: "cancelled_pro_blocks_pro",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_annual.dodoProductId!,
+      },
+    );
+
+    expect(result).toMatchObject({
+      planKey: "pro_annual",
+      status: "cancelled",
+    });
+  });
+
+  test("a cancelled-but-paid-through Pro Business subscription still blocks a Pro checkout", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_business_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+      status: "cancelled",
+      currentPeriodEnd: NOW + 14 * DAY_MS,
+      suffix: "cancelled_pro_business_blocks_pro",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+      },
+    );
+
+    expect(result).toMatchObject({
+      planKey: "pro_business_monthly",
+      status: "cancelled",
+    });
+  });
+
+  test("blocks an annual Pro Business checkout while a monthly Pro Business subscription is active", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_business_monthly",
+      dodoProductId: PRODUCT_CATALOG.pro_business_monthly.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 30 * DAY_MS,
+      suffix: "pro_business_blocks_pro_business",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.pro_business_annual.dodoProductId!,
+      },
+    );
+
+    expect(result).toMatchObject({
+      planKey: "pro_business_monthly",
+      status: "active",
+      displayName: "Pro Business Monthly",
+    });
+  });
+
+  test("an active Pro Business subscription does not block an API checkout", async () => {
+    const t = convexTest(schema, modules);
+
+    await seedSubscription(t, {
+      planKey: "pro_business_annual",
+      dodoProductId: PRODUCT_CATALOG.pro_business_annual.dodoProductId!,
+      status: "active",
+      currentPeriodEnd: NOW + 300 * DAY_MS,
+      suffix: "pro_business_not_blocking_api",
+    });
+
+    const result = await t.query(
+      internal.payments.billing.getCheckoutBlockingSubscription,
+      {
+        userId: TEST_USER_ID,
+        productId: PRODUCT_CATALOG.api_starter.dodoProductId!,
+      },
+    );
+
+    expect(result).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
