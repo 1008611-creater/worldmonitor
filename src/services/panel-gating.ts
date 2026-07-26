@@ -11,6 +11,7 @@ import {
   type ExportGateVerdict,
   type TabCapVerdict,
 } from './export-gate';
+import type { ClientEntitlementBelief } from './premium-denial';
 import { getSecretState } from './runtime-config';
 import { isProUser } from './widget-store';
 
@@ -49,6 +50,20 @@ export function hasPremiumAccess(authState?: AuthSession): boolean {
   if (isProUser()) return true;
   if (authState?.user?.role === 'pro') return true;
   return false;
+}
+
+/**
+ * Snapshot what the CLIENT believes about this account's plan, for
+ * `classifyPremiumDenial` (#5608). Deliberately narrower than
+ * hasPremiumAccess: the desktop API key and the browser tester keys unlock
+ * panels locally but assert nothing about the signed-in Clerk account, so
+ * they must not suppress a legitimate upgrade CTA.
+ */
+export function readClientEntitlementBelief(authState: AuthSession): ClientEntitlementBelief {
+  return {
+    entitlementTier: getEntitlementState()?.features.tier ?? null,
+    authRole: authState.user?.role ?? null,
+  };
 }
 
 /**
