@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activationCohortOf,
   analyzeActivationLift,
+  analyzeActivationLiftByCohort,
   fetchTable,
   formatActivationLiftReport,
+  formatActivationLiftReportByCohort,
   indexFeatureRows,
   runCli,
 } from "../scripts/report-activation-lift.mjs";
@@ -233,6 +236,88 @@ test("analysis refuses capped exports before rates and enforces the mature sampl
   assert.equal(complete.engaged.n, 29);
   assert.equal(complete.presentedOnly.n, 30);
   assert.equal(complete.verdict, "below-sample-floor");
+});
+
+test("cohorts are analyzed and reported separately, never pooled (#5621)", () => {
+  const observationStartedAt = NOW - WINDOW_MS;
+  const presentations = [
+    // Day-0: engaged, and adopted a feature inside the window.
+    {
+      userId: "day0-engaged",
+      cohort: "day0",
+      presentedAt: observationStartedAt,
+      outcomeTrackingVersion: 1,
+      confirmedSteps: ["brief"],
+      exitedAt: observationStartedAt,
+    },
+    // Day-0: the #5600 shape — shown, every step failed, nothing adopted.
+    {
+      userId: "day0-all-writes-failed",
+      cohort: "day0",
+      presentedAt: observationStartedAt,
+      outcomeTrackingVersion: 1,
+      confirmedSteps: [],
+      failedSteps: ["brief", "alerts"],
+      exitedAt: observationStartedAt,
+    },
+    // Retro rows carry no `cohort` field at all — including every row written
+    // before day-0 instrumentation existed.
+    {
+      userId: "retro-engaged",
+      presentedAt: observationStartedAt,
+      outcomeTrackingVersion: 1,
+      confirmedSteps: ["alerts"],
+      exitedAt: observationStartedAt,
+    },
+    {
+      userId: "retro-presented-only",
+      presentedAt: observationStartedAt,
+      outcomeTrackingVersion: 1,
+      confirmedSteps: [],
+      exitedAt: observationStartedAt,
+    },
+  ];
+  const featureRowsByTable = {
+    ...emptyFeatureRows(),
+    notificationChannels: [
+      { userId: "day0-engaged", verified: true, linkedAt: observationStartedAt + DAY_MS },
+      { userId: "retro-presented-only", verified: true, linkedAt: observationStartedAt + DAY_MS },
+    ],
+  };
+
+  assert.equal(activationCohortOf({ cohort: "day0" }), "day0");
+  assert.equal(activationCohortOf({}), "retro");
+
+  const byCohort = analyzeActivationLiftByCohort({
+    presentations,
+    featureRowsByTable,
+    reportNow: NOW,
+    windowMs: WINDOW_MS,
+    minGroupSize: 1,
+  });
+
+  // Each cohort sees only its own rows, so neither total can include the other.
+  assert.equal(byCohort.day0.totalPresentations, 2);
+  assert.equal(byCohort.retro.totalPresentations, 2);
+  assert.equal(byCohort.day0.engaged.n, 1);
+  assert.equal(byCohort.day0.presentedOnly.n, 1);
+  assert.equal(byCohort.retro.engaged.n, 1);
+  assert.equal(byCohort.retro.presentedOnly.n, 1);
+
+  // The two cohorts have OPPOSITE lifts here; pooling them would cancel out to
+  // zero and report "no effect" for both.
+  assert.equal(byCohort.day0.lift, 1);
+  assert.equal(byCohort.retro.lift, -1);
+
+  const report = formatActivationLiftReportByCohort(byCohort, {
+    windowDays: 14,
+    limit: 20_000,
+    minGroupSize: 1,
+  });
+  assert.match(report, /=== Day-0 \(post-checkout welcome\) — window=14d/);
+  assert.match(report, /=== Retro \(markerless first-cycle backfill\) — window=14d/);
+  assert.match(report, /100\.0 percentage points higher/);
+  assert.match(report, /100\.0 percentage points lower/);
 });
 
 test("feature indexing performs one pass and excludes inactive credentials", () => {
