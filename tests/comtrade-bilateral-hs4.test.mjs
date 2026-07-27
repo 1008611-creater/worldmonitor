@@ -9,6 +9,7 @@ function readFileSync(path, options) {
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { candidatePeriods } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
 
 const root = join(import.meta.dirname, '..');
 
@@ -134,9 +135,14 @@ describe('Comtrade bilateral HS4 seeder (scripts/seed-comtrade-bilateral-hs4.mjs
   });
 
   it('falls back to an earlier period per-reporter when the primary period is empty', () => {
-    assert.ok(
-      src.includes('export function candidatePeriods'),
-      'seeder: must export candidatePeriods() so a reporter that has not filed (y-2) yet is retried at (y-3)',
+    // Behavioural, not a source grep: the helper now lives in
+    // scripts/shared/comtrade-period.mjs and is re-exported, so a text match on
+    // `export function candidatePeriods` would fail on a working seeder — and,
+    // worse, would pass on a broken one that merely kept the token.
+    assert.deepEqual(
+      candidatePeriods(new Date('2026-07-02T00:00:00Z')),
+      ['2024', '2023'],
+      'seeder: a reporter that has not filed (y-2) must still be retried at (y-3)',
     );
     assert.match(
       src,

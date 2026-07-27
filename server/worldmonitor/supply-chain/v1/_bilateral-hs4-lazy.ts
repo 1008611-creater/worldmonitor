@@ -17,6 +17,9 @@ import { getCachedJson, setCachedJson } from '../../../_shared/redis';
 import UN_TO_ISO2 from '../../../../scripts/shared/un-to-iso2.json';
 import COMTRADE_REPORTER_OVERRIDES from '../../../../scripts/shared/comtrade-reporter-overrides.json';
 
+import strategicProductMetadata from '../../../../scripts/shared/comtrade-strategic-products.json';
+import { recentPeriod } from '../../../../scripts/shared/comtrade-period.mjs';
+
 const COMTRADE_BASE = 'https://comtradeapi.un.org/public/v1/preview/C/A/HS';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 const KEY_PREFIX = 'comtrade:bilateral-hs4:';
@@ -25,9 +28,6 @@ const SUCCESS_TTL = 3456000; // 40 days
 const EMPTY_TTL = 86400; // 24h
 const FETCH_TIMEOUT_MS = 5000;
 
-function recentPeriod(now = new Date(), lag = 2): string {
-  return String(now.getUTCFullYear() - lag);
-}
 
 // Unlike scripts/seed-comtrade-bilateral-hs4.mjs, this path does NOT fall back
 // to (y-3) when (y-2) is empty: this runs synchronously inside a live request
@@ -37,11 +37,15 @@ function recentPeriod(now = new Date(), lag = 2): string {
 // reporter that has not yet filed (y-2) — far tighter than the bulk seeder's
 // 40-day cache, which is why that path carries the fallback instead.
 
-const HS4_CODES = [
-  '2709', '2711', '8542', '8517', '8703', '3004', '7108', '2710',
-  '8471', '8411', '7601', '7202', '3901', '2902', '1001', '1201',
-  '6204', '0203', '8704', '8708',
-];
+// Derived from the same catalogue the bulk seeder uses, not a second hardcoded
+// list. Both write the SAME Redis key, so a product added to the catalogue
+// would otherwise land in the seeder's payloads and be silently absent from
+// every payload this fallback produces, with nothing to surface the drift.
+const HS4_CODES = Array.from(new Set(
+  (strategicProductMetadata.products as Array<{ bilateralHs4Code?: string }>)
+    .map(p => p.bilateralHs4Code)
+    .filter((code): code is string => typeof code === 'string' && code.length > 0),
+));
 
 const HS4_LABELS: Record<string, string> = {
   '2709': 'Crude Petroleum', '2711': 'LNG & Petroleum Gas',

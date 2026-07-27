@@ -124,6 +124,65 @@ test('invariant: SEED_META_TTL_SECONDS strictly outlives FRESHNESS_GATE_MS', () 
   );
 });
 
+test('a degraded run still holds the gate shut — the quota cannot afford a retry', async () => {
+  // Deliberate, and the opposite of the intuitive fix. Letting a 'partial' run
+  // re-open the gate would be unbounded: one pass costs ~394 of the 500
+  // calls/month quota and quota exhaustion is itself a cause of 'partial', so
+  // the degraded state feeds itself and every tick retriggers a full run. The
+  // gate is the only quota guard living in the repo rather than in Railway
+  // config, so it must not be conditional on run quality. Degradation is made
+  // visible through recordCount/minRecordCount instead.
+  mockRedisGet(JSON.stringify({ fetchedAt: Date.now(), recordCount: 4, status: 'partial' }));
+
+  const result = await checkSeedMetaFreshness();
+
+  assert.equal(result.fresh, true, 'a recent partial run must NOT reopen the quota gate');
+  assert.equal(result.reason, 'within-gate');
+});
+
+test('an errored run also holds the gate shut', async () => {
+  // The error path writes status 'error' AFTER the fetch loop has already
+  // spent the quota, so it is the most expensive case to let through.
+  mockRedisGet(JSON.stringify({ fetchedAt: Date.now(), recordCount: 0, status: 'error' }));
+
+  const result = await checkSeedMetaFreshness();
+
+  assert.equal(result.fresh, true);
+});
+
+test('an old degraded run is stale and does run again', async () => {
+  // The flip side: waiting is bounded by the gate, not indefinite.
+  mockRedisGet(JSON.stringify({
+    fetchedAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+    recordCount: 4,
+    status: 'partial',
+  }));
+
+  const result = await checkSeedMetaFreshness();
+
+  assert.equal(result.fresh, false);
+  assert.equal(result.reason, 'stale');
+});
+
+test('a healthy recent run still skips the next tick (quota guard intact)', async () => {
+  // The mirror of the test above: loosening the gate for degraded runs must not
+  // loosen it for good ones, or every tick burns ~394 of the 500/month quota.
+  mockRedisGet(JSON.stringify({ fetchedAt: Date.now(), recordCount: 180, status: 'ok' }));
+
+  const result = await checkSeedMetaFreshness();
+
+  assert.equal(result.fresh, true);
+  assert.equal(result.reason, 'within-gate');
+});
+
+test('legacy seed-meta with no status field keeps the original age-only behaviour', async () => {
+  mockRedisGet(JSON.stringify({ fetchedAt: Date.now(), recordCount: 180 }));
+
+  const result = await checkSeedMetaFreshness();
+
+  assert.equal(result.fresh, true, 'absent status must not be treated as degraded');
+});
+
 test('health freshness budgets cover the monthly Railway cadence without masking a missed run', () => {
   const compactHealth = readFileSync(join(root, 'api', 'health.js'), 'utf8');
   const seedHealth = readFileSync(join(root, 'api', 'seed-health.js'), 'utf8');
@@ -132,11 +191,14 @@ test('health freshness budgets cover the monthly Railway cadence without masking
   // literals. Pinned literals let a future cadence change update both files
   // and this test in lockstep while silently breaking the invariant that
   // seed-health warns before compact health times out.
+  // Not anchored on a trailing `}` — these entries also carry minRecordCount,
+  // and requiring the value to be the last property made the guard silently
+  // stop matching the moment one was added.
   const maxStaleMatch = compactHealth.match(
-    /comtradeBilateralHs4:\s*\{[^}]*maxStaleMin:\s*(\d+)\s*\}/,
+    /comtradeBilateralHs4:\s*\{[^}]*?maxStaleMin:\s*(\d+)/,
   );
   const intervalMatch = seedHealth.match(
-    /'comtrade:bilateral-hs4':\s*\{[^}]*intervalMin:\s*(\d+)\s*\}/,
+    /'comtrade:bilateral-hs4':\s*\{[^}]*?intervalMin:\s*(\d+)/,
   );
   assert.ok(maxStaleMatch, 'compact health must register comtradeBilateralHs4 with a maxStaleMin');
   assert.ok(intervalMatch, 'seed-health must register comtrade:bilateral-hs4 with an intervalMin');

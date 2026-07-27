@@ -13,6 +13,10 @@ import {
   releaseLock,
   sleep,
 } from './_seed-utils.mjs';
+import { candidatePeriods, periodWindow, recentPeriod } from './shared/comtrade-period.mjs';
+
+// Re-exported so existing importers (tests, sibling seeders) keep one source.
+export { recentPeriod, candidatePeriods };
 
 loadEnvFile(import.meta.url);
 
@@ -50,6 +54,39 @@ export const SEED_META_TTL_SECONDS = Math.max(
   Math.ceil(FRESHNESS_GATE_MS / 1000) + 86_400,
 );
 
+// Coverage floor: below this many seeded countries a run is "partial", not a
+// success. seed-meta records status 'partial', and /api/health declares the
+// same number as minRecordCount so a shrunken snapshot reads COVERAGE_PARTIAL
+// instead of OK — without it, 3-of-197 and 197-of-197 were indistinguishable
+// for the whole 35-day staleness window.
+//
+// Deliberately NOT wired to the freshness gate. Letting a partial run reopen
+// the gate looks like faster recovery but is a quota trap: quota exhaustion is
+// itself a cause of 'partial', so the degraded state would feed itself and
+// retrigger a full ~394-call run on every tick.
+//
+// 110 of the 197 country-port-clusters entries (~56%). Deliberately loose: the
+// true healthy count is unmeasured, and a floor above it would warn forever —
+// the trap that makes operators ignore a signal. Sized to catch a collapse,
+// not to certify full coverage. Keep in step with api/health.js + seed-health.js.
+export const MIN_COUNTRY_COVERAGE = 110;
+
+/**
+ * The run's verdict on its own coverage, as a pure predicate so the decision is
+ * unit-testable without driving all of main().
+ * @param {number} writtenCount
+ * @returns {'ok' | 'partial'}
+ */
+export function coverageStatus(writtenCount) {
+  return writtenCount >= MIN_COUNTRY_COVERAGE ? 'ok' : 'partial';
+}
+
+// How many consecutive runs a country's payload may be kept alive by TTL
+// refresh alone. Past this it is allowed to expire, so the on-demand lazy
+// fallback can re-probe instead of being short-circuited by an immortal
+// payload that no consumer age-checks.
+export const MAX_PRESERVE_RUNS = 2;
+
 const COMTRADE_KEYS = (process.env.COMTRADE_API_KEYS || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 function getNextKey() {
@@ -76,18 +113,19 @@ const REQUEST_BUDGET = Number(process.env.COMTRADE_REQUEST_BUDGET) || 480;
 // Comtrade annual data lags across reporters. Without an explicit period the
 // API currently returns HTTP 200 with count=0, so every country is silently
 // dropped. Pin the newest safely-final year, matching seed-trade-flows.mjs.
-export function recentPeriod(now = new Date(), lag = 2) {
-  return String(now.getUTCFullYear() - lag);
-}
 
-// Candidate periods, freshest first. Some reporters haven't filed (y-2) yet —
-// without a fallback those reporters come back empty for the entire monthly
-// run and (since writes are skipped on empty results, see main()) stay stale
-// until the next cron tick. (y-3) is guaranteed-final. Mirrors
-// seed-trade-flows.mjs's candidatePeriods(), applied per-reporter here instead
-// of via a global coverage gate since each country writes its own key.
-export function candidatePeriods(now = new Date()) {
-  return [recentPeriod(now, 2), recentPeriod(now, 3)];
+// Which periods a run tries, per route.
+//
+// Authenticated route: ONE request carrying a 4-year window. Late filers (UAE,
+// Oman, Bahrain) and the Jan-1 rollover are covered without a second call, so
+// the request budget below never binds and every reporter benefits — not just
+// the first few that fit the spare quota.
+//
+// Public preview route: that route answers HTTP 400 to a comma-separated
+// period (probed 2026-07-26), so it falls back sequentially instead. The loop
+// in main() and REQUEST_BUDGET bound the doubled cost there.
+export function periodCandidates(isPublicRoute, now = new Date()) {
+  return isPublicRoute ? candidatePeriods(now) : [periodWindow(now)];
 }
 
 const BILATERAL_PRODUCTS = STRATEGIC_PRODUCT_METADATA.products.filter((product) => product.bilateralHs4Code);
@@ -156,6 +194,25 @@ export async function checkSeedMetaFreshness(now = Date.now()) {
 }
 
 /**
+ * Consecutive TTL-refresh streak per ISO2 from the previous run's seed-meta.
+ * Fail-open: any read/parse error yields {} so every streak restarts at zero,
+ * which only ever grants MORE grace before a payload expires, never less.
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function readPreserveStreaks() {
+  try {
+    const result = await redisPipeline([['GET', META_KEY]]);
+    const raw = Array.isArray(result) ? result[0]?.result : null;
+    if (!raw || typeof raw !== 'string') return {};
+    const streaks = JSON.parse(raw)?.preserveStreaks;
+    if (!streaks || typeof streaks !== 'object' || Array.isArray(streaks)) return {};
+    return streaks;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * @param {number} status
  * @returns {boolean}
  */
@@ -167,11 +224,31 @@ export function isTransientComtrade(status) {
   return status === 500 || status === 502 || status === 503 || status === 504;
 }
 
+// Circuit breaker for an exhausted quota. fetchBilateral waits 60s on the first
+// 429 of every call, so once the quota is gone a full pass sits through ~394 of
+// those waits — about 6.6 hours against a 30-minute LOCK_TTL_MS. The lock would
+// expire mid-run and the next tick could start a second run on top of it. Five
+// consecutive rate-limited reporters is ~10 minutes, well inside the lock, and
+// by then the quota verdict is not in doubt.
+export const MAX_CONSECUTIVE_RATE_LIMITED = 5;
+let consecutiveRateLimited = 0;
+/** Reset at the start of every run; also lets tests isolate module state. */
+export function resetRateLimitStreak() { consecutiveRateLimited = 0; }
+
 // Retry sleep is indirected through a module-local binding so unit tests can
 // swap in a no-op without changing production cadence. Production defaults
 // to the real sleep import; tests call __setSleepForTests(() => Promise.resolve()).
 let _retrySleep = sleep;
-export function __setSleepForTests(fn) { _retrySleep = typeof fn === 'function' ? fn : sleep; }
+// The inter-request pacing sleep is indirected too. Without it main() is
+// untestable by construction: 197 countries x 2 batches x INTER_REQUEST_DELAY_MS
+// is over 20 minutes of real waiting, so the whole write path could only be
+// checked by reading the diff. Production still gets the real cadence.
+let _paceSleep = sleep;
+export function __setSleepForTests(fn) {
+  const next = typeof fn === 'function' ? fn : sleep;
+  _retrySleep = next;
+  _paceSleep = next;
+}
 
 async function fetchBilateralOnce(url, timeoutMs = 45_000) {
   return fetch(url, {
@@ -230,8 +307,11 @@ export async function fetchBilateral(reporterCode, hs4Batch, period = recentPeri
   if (!resp.ok) {
     const tag = (rateLimitedOnce || transientRetries > 0) ? ' (after retries)' : '';
     console.warn(`    HTTP ${resp.status} for reporter ${reporterCode}${tag}`);
+    if (resp.status === 429) consecutiveRateLimited++;
     return [];
   }
+
+  consecutiveRateLimited = 0;
 
   const data = await resp.json();
   const parsed = parseRecords(data);
@@ -263,27 +343,45 @@ function parseRecords(data) {
  * @param {number} [fallbackYear] year to report when no record carries a usable period/refYear
  * @returns {Array<{hs4: string, description: string, totalValue: number, topExporters: Array<{partnerCode: number, partnerIso2: string, value: number, share: number}>, year: number}>}
  */
-function groupByProduct(records, fallbackYear = Number(recentPeriod())) {
+export function groupByProduct(records, fallbackYear = Number(recentPeriod())) {
   /** @type {Map<string, Map<string, {value: number, year: number}>>} */
   const byCode = new Map();
   for (const r of records) {
     if (!byCode.has(r.cmdCode)) byCode.set(r.cmdCode, new Map());
     const partners = byCode.get(r.cmdCode);
     const existing = partners.get(r.partnerCode);
-    if (!existing || r.primaryValue > existing.value) {
+    // Newest year first, then largest value within it. With a single-period
+    // response every r.year is equal, so this reduces to the previous
+    // largest-value behaviour.
+    if (!existing || r.year > existing.year
+      || (r.year === existing.year && r.primaryValue > existing.value)) {
       partners.set(r.partnerCode, { value: r.primaryValue, year: r.year });
     }
   }
 
   const products = [];
   for (const [hs4, partners] of byCode) {
-    const sorted = [...partners.entries()]
+    const ranked = [...partners.entries()]
       .sort((a, b) => b[1].value - a[1].value)
       .filter(([pc]) => pc !== '0' && pc !== '000');
+
+    // Collapse the product to ONE year before aggregating. Newest-year-per-
+    // partner is not enough on the multi-year window: a partner that traded in
+    // an older window year but not the newest would otherwise be summed into
+    // totalValue and ranked into topExporters, so a lapsed relationship could
+    // hold most of the share of a snapshot labelled a year it did not trade in.
+    // A late filer is unaffected — all its rows sit at the same older year.
+    const years = ranked.map(([, v]) => v.year).filter(y => y > 0);
+    // Math.max(...[]) is -Infinity, which is TRUTHY — so `latestYear || fallback`
+    // would return -Infinity and serialize as null, never reaching the fallback.
+    const latestYear = years.length > 0 ? Math.max(...years) : 0;
+    const sorted = latestYear > 0
+      ? ranked.filter(([, v]) => v.year === latestYear)
+      : ranked;
+
     const totalValue = sorted.reduce((s, [, v]) => s + v.value, 0);
     if (totalValue <= 0) continue;
     const top5 = sorted.slice(0, 5);
-    const latestYear = Math.max(...sorted.map(([, v]) => v.year).filter(y => y > 0));
     products.push({
       hs4,
       description: HS4_LABELS[hs4] ?? hs4,
@@ -294,7 +392,7 @@ function groupByProduct(records, fallbackYear = Number(recentPeriod())) {
         value: v.value,
         share: Math.round((v.value / totalValue) * 1000) / 1000,
       })),
-      year: latestYear || fallbackYear,
+      year: latestYear > 0 ? latestYear : fallbackYear,
     });
   }
   return products.sort((a, b) => b.totalValue - a.totalValue);
@@ -321,7 +419,7 @@ export async function main() {
 
   const lock = await acquireLockSafely(LOCK_DOMAIN, runId, LOCK_TTL_MS, { label: LOCK_DOMAIN });
 
-  const PERIODS = candidatePeriods();
+  const PERIODS = periodCandidates(usePublicApi);
   const countries = Object.entries(COUNTRY_PORT_CLUSTERS)
     .filter(([k]) => k !== '_comment' && k.length === 2);
   const allKeys = countries.map(([iso2]) => `${KEY_PREFIX}${iso2}:v1`);
@@ -336,19 +434,23 @@ export async function main() {
     return;
   }
 
-  const writeMeta = async (count, status = 'ok') => {
-    const meta = JSON.stringify({ fetchedAt: Date.now(), recordCount: count, status });
+  const writeMeta = async (count, status = 'ok', preserveStreaks = {}) => {
+    const meta = JSON.stringify({ fetchedAt: Date.now(), recordCount: count, status, preserveStreaks });
     // TTL ≥ FRESHNESS_GATE_MS so the gate's "fresh" answer cannot be silently
     // invalidated by Redis eviction. See the SEED_META_TTL_SECONDS comment.
     await redisPipeline([['SET', META_KEY, meta, 'EX', String(SEED_META_TTL_SECONDS)]])
       .catch(e => console.warn('[bilateral-hs4] Failed to write seed-meta:', e.message));
   };
 
+  const priorStreaks = await readPreserveStreaks();
+  resetRateLimitStreak();
+
   try {
     const apiMode = usePublicApi ? 'public preview (no COMTRADE_API_KEYS)' : `authenticated (${COMTRADE_KEYS.length} key(s), ${INTER_REQUEST_DELAY_MS}ms delay)`;
     console.log(`[bilateral-hs4] Fetching bilateral HS4 data for ${countries.length} countries × ${HS4_CODES.length} products [${apiMode}]...`);
 
     const commands = [];
+    const writtenKeys = new Set();
     let writtenCount = 0;
     let failedCount = 0;
     let requestCount = 0;
@@ -361,7 +463,7 @@ export async function main() {
         continue;
       }
 
-      if (requestCount > 0) await sleep(INTER_REQUEST_DELAY_MS);
+      if (requestCount > 0) await _paceSleep(INTER_REQUEST_DELAY_MS);
 
       try {
         let batch1 = [];
@@ -379,7 +481,7 @@ export async function main() {
           batch1 = await fetchBilateral(unCode, BATCH_1, usedPeriod);
           requestCount++;
 
-          await sleep(INTER_REQUEST_DELAY_MS);
+          await _paceSleep(INTER_REQUEST_DELAY_MS);
 
           console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 2/2 (period ${usedPeriod})...`);
           batch2 = await fetchBilateral(unCode, BATCH_2, usedPeriod);
@@ -388,11 +490,11 @@ export async function main() {
           if (batch1.length > 0 || batch2.length > 0) break;
           if (p < PERIODS.length - 1) {
             console.warn(`    ${iso2}: no records for period ${usedPeriod}, retrying with fallback period ${PERIODS[p + 1]}...`);
-            await sleep(INTER_REQUEST_DELAY_MS);
+            await _paceSleep(INTER_REQUEST_DELAY_MS);
           }
         }
 
-        const products = groupByProduct([...batch1, ...batch2], Number(usedPeriod));
+        const products = groupByProduct([...batch1, ...batch2], Number(String(usedPeriod).split(',')[0]));
         if (products.length === 0) {
           console.warn(`    ${iso2}: no products after grouping, skipping write`);
         } else {
@@ -402,6 +504,7 @@ export async function main() {
             fetchedAt: new Date().toISOString(),
           });
           commands.push(['SET', `${KEY_PREFIX}${iso2}:v1`, payload, 'EX', String(TTL_SECONDS)]);
+          writtenKeys.add(`${KEY_PREFIX}${iso2}:v1`);
           writtenCount++;
           console.log(`    ${iso2}: ${products.length} products, ${batch1.length + batch2.length} records`);
         }
@@ -413,13 +516,54 @@ export async function main() {
       if (commands.length >= 50) {
         await redisPipeline(commands.splice(0));
       }
+
+      if (consecutiveRateLimited >= MAX_CONSECUTIVE_RATE_LIMITED) {
+        console.warn(`[bilateral-hs4] ABORTING after ${consecutiveRateLimited} consecutive rate-limited reporters — the monthly quota looks exhausted. Writing the partial result rather than grinding through ~${countries.length - i - 1} more 60s waits and outliving the ${LOCK_TTL_MS / 60_000}min lock.`);
+        break;
+      }
     }
 
     if (commands.length > 0) {
       await redisPipeline(commands);
     }
 
-    await writeMeta(writtenCount);
+    // Countries that returned nothing keep their last good payload — but only
+    // if the TTL is refreshed, else the key still expires TTL_SECONDS after its
+    // last SUCCESSFUL write. Two bounds, both from review:
+    //   1. Only keys that ALREADY EXIST. extendExistingTtl warns per missing
+    //      key, so extending the whole 197-country roster (most never written
+    //      while the feed recovers) fires a ~190-key "manual seed required"
+    //      alarm every run — the alarm fatigue the coverage floor avoids.
+    //   2. Only for MAX_PRESERVE_RUNS consecutive runs, so an abandoned
+    //      reporter ages out instead of becoming immortal and permanently
+    //      short-circuiting the lazy fallback that would re-probe it.
+    /** @type {Record<string, number>} iso2 -> consecutive preserved runs */
+    const preserveStreaks = {};
+    const staleKeys = allKeys.filter(k => !writtenKeys.has(k));
+    const existing = staleKeys.length > 0
+      ? await redisPipeline(staleKeys.map(k => ['EXISTS', k]))
+          .catch(e => {
+            console.warn('[bilateral-hs4] preserved-key EXISTS probe failed:', e.message);
+            return null;
+          })
+      : null;
+
+    const preservedKeys = [];
+    for (let k = 0; k < staleKeys.length; k++) {
+      if (!existing || Number(existing[k]?.result) !== 1) continue;
+      const iso2 = staleKeys[k].slice(KEY_PREFIX.length, -3);
+      const streak = (priorStreaks[iso2] ?? 0) + 1;
+      if (streak > MAX_PRESERVE_RUNS) continue; // let it age out
+      preserveStreaks[iso2] = streak;
+      preservedKeys.push(staleKeys[k]);
+    }
+    if (preservedKeys.length > 0) {
+      await extendExistingTtl(preservedKeys, TTL_SECONDS)
+        .catch(e => console.warn('[bilateral-hs4] TTL extension (preserved) failed:', e.message));
+    }
+
+    const status = coverageStatus(writtenCount);
+    await writeMeta(writtenCount, status, preserveStreaks);
 
     logSeedResult('comtrade:bilateral-hs4', writtenCount, Date.now() - startedAt, {
       countries: countries.length,
@@ -427,8 +571,13 @@ export async function main() {
       hs4Codes: HS4_CODES.length,
       requests: requestCount,
       ttlH: TTL_SECONDS / 3600,
+      preserved: preservedKeys.length,
+      status,
     });
-    console.log(`[bilateral-hs4] Seeded ${writtenCount} country keys (${failedCount} failed, existing data preserved)`);
+    if (status === 'partial') {
+      console.warn(`[bilateral-hs4] PARTIAL: seeded ${writtenCount} of ${countries.length} countries (floor ${MIN_COUNTRY_COVERAGE})`);
+    }
+    console.log(`[bilateral-hs4] Seeded ${writtenCount} country keys (${failedCount} failed, ${preservedKeys.length} preserved)`);
   } catch (err) {
     console.error('[bilateral-hs4] Seed failed:', err.message || err);
     await extendExistingTtl([...allKeys, META_KEY], TTL_SECONDS)

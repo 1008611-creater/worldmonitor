@@ -85,10 +85,21 @@ test('fetchBilateral: requests an explicit safely-final annual period', async ()
 
   await fetchBilateral('699', ['2709']);
 
-  assert.equal(
-    new URL(fetchCalls[0]).searchParams.get('period'),
-    String(new Date().getUTCFullYear() - 2),
-  );
+  // Assert the FRESHEST requested year, not the whole parameter: the seeder
+  // sends a multi-year window on the authenticated route and a single year on
+  // the public preview route (which 400s on a list), so the exact string
+  // depends on whether COMTRADE_API_KEYS is present. Pinning the full value
+  // would pass locally and mean something different on CI.
+  const period = new URL(fetchCalls[0]).searchParams.get('period');
+  assert.ok(period, 'period must always be sent — omitting it is the count=0 outage');
+  assert.equal(period.split(',')[0], String(new Date().getUTCFullYear() - 2));
+});
+
+test('recentPeriod: pins y-2 and rolls forward at the UTC year boundary', () => {
+  assert.equal(recentPeriod(new Date('2026-07-02T00:00:00Z')), '2024');
+  assert.equal(recentPeriod(new Date('2026-12-31T23:59:59Z')), '2024');
+  assert.equal(recentPeriod(new Date('2027-01-01T00:00:00Z')), '2025');
+  assert.equal(recentPeriod(new Date('2027-01-01T00:00:00Z'), 3), '2024');
 });
 
 test('candidatePeriods: returns (y-2) then (y-3) for the per-reporter fallback', () => {
