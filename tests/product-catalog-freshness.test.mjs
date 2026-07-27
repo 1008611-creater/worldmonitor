@@ -246,6 +246,29 @@ describe('Product catalog freshness', () => {
   });
 
   it('Pro locale MCP pricing feature mentions Claude Desktop and the call allowance', () => {
+    // A locale may write the allowance in its own numeral system — fa uses
+    // Persian-Indic digits ("۵۰ فراخوانی/روز"), as it already did for the API
+    // request limits before it was translated. Fold those to ASCII so the
+    // assertion reads the NUMBER rather than the glyphs. The guard is unchanged
+    // in strength: if the allowance moved to 250 and a locale still said ۵۰,
+    // this would still fail.
+    //
+    // Covers Devanagari (hi), Bengali and Thai (th) as well, not just the two
+    // ranges fa needs: those locales currently write ASCII, but fa is exactly
+    // what happens on the pass that changes that, and a false CI failure on an
+    // unrelated PR is the predictable cost of enumerating only what is needed
+    // today. A digit from an unlisted script passes through unchanged, so the
+    // assertion fails loudly rather than matching something wrong.
+    // (Number('۵') is NaN — JS parses ASCII digits only — so this has to be
+    // codepoint arithmetic against each block's zero.)
+    const DIGIT_ZEROS = [0x0030, 0x0660, 0x06f0, 0x0966, 0x09e6, 0x0e50];
+    const toAsciiDigits = (value) =>
+      value.replace(/\p{Nd}/gu, (digit) => {
+        const cp = digit.codePointAt(0);
+        const zero = DIGIT_ZEROS.find((z) => cp >= z && cp < z + 10);
+        return zero === undefined ? digit : String(cp - zero);
+      });
+
     for (const [file, src] of Object.entries(readProLocaleFiles())) {
       const locale = JSON.parse(src);
       const features = locale?.pricing?.tiers?.pro?.features;
@@ -254,7 +277,11 @@ describe('Product catalog freshness', () => {
       assert.equal(typeof feature, 'string', `${file} missing a Pro pricing feature mentioning MCP`);
       assert.match(feature, /\bMCP\b/, `${file} Pro MCP feature should mention MCP`);
       assert.match(feature, /Claude Desktop/, `${file} Pro MCP feature should mention Claude Desktop`);
-      assert.match(feature, /\b50\b/, `${file} Pro MCP feature should mention the 50 calls/day allowance`);
+      assert.match(
+        toAsciiDigits(feature),
+        /\b50\b/,
+        `${file} Pro MCP feature should mention the 50 calls/day allowance`,
+      );
     }
   });
 
