@@ -1,4 +1,5 @@
 ---
+import productFacts from '../../../shared/product-facts.generated.json';
 import TrackedProductLink from '../components/TrackedProductLink.astro';
 
 interface Props {
@@ -30,6 +31,8 @@ const resolvedOgImageType = resolvedOgImage.toLowerCase().split(/[?#]/)[0].endsW
 const resolvedOgType = ogType || 'website';
 const keywordTags = keywords ? keywords.split(',').map(k => k.trim()).slice(0, 6) : [];
 const resolvedCanonicalUrl = canonicalUrl || new URL(Astro.url.pathname, 'https://www.worldmonitor.app').href;
+const proCtaUrl = productFacts.product.pricingUrl;
+const proCtaLabel = productFacts.product.primaryCtaLabel;
 
 function stringifyJsonLd(value: Record<string, unknown>): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
@@ -125,11 +128,12 @@ function stringifyJsonLd(value: Record<string, unknown>): string {
         </ul>
         <TrackedProductLink
           destination="pro"
+          href={proCtaUrl}
           placement="header-primary"
           campaign={attributionCampaign}
           class="nav-cta"
         >
-          Explore Pro
+          {proCtaLabel}
         </TrackedProductLink>
       </nav>
     </header>

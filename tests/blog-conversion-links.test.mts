@@ -48,8 +48,10 @@ describe('blog conversion attribution', () => {
     );
 
     assert.doesNotMatch(base, /#waitlist|Get Early Access/);
-    assert.match(base, /Explore Pro/);
     assert.match(base, /TrackedProductLink/);
+    assert.match(base, /productFacts\.product\.primaryCtaLabel/);
+    assert.match(base, /href=\{proCtaUrl\}/);
+    assert.match(post, /Explore Pro/);
     assert.match(
       base,
       /data-domains="[^"]*\bwww\.worldmonitor\.app\b[^"]*"/,

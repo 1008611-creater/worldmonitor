@@ -10,6 +10,7 @@ import {
 
 interface Props {
   destination: BlogProductDestination;
+  href?: string;
   placement: string;
   campaign?: string;
   class?: string;
@@ -17,6 +18,7 @@ interface Props {
 
 const {
   destination,
+  href,
   placement,
   campaign,
   class: className,
@@ -26,7 +28,7 @@ const normalizedPlacement = normalizeBlogAttributionToken(placement, 'product-li
 ---
 
 <a
-  href={BLOG_PRODUCT_URLS[destination]}
+  href={href ?? BLOG_PRODUCT_URLS[destination]}
   class={className}
   target="_blank"
   rel="noopener noreferrer"
