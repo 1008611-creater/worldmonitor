@@ -22,6 +22,8 @@ declare global {
   interface Window {
     __wmPaintEntries?: PaintEntrySnapshot[];
     __wmLcpEntries?: LcpEntrySnapshot[];
+    __wmWelcomeHydrationDispatched?: boolean;
+    __wmWelcomeRootClearCount?: number;
   }
 }
 
@@ -81,6 +83,25 @@ const delayDashboardMain = async (page: Page): Promise<{ release: () => void; re
   });
 
   await page.route('**/src/main.ts', async (route) => {
+    resolveRequested();
+    await releasePromise;
+    await route.continue();
+  });
+
+  return { release: releaseMain, requested };
+};
+
+const delayWelcomeMain = async (page: Page): Promise<{ release: () => void; requested: Promise<void> }> => {
+  let releaseMain!: () => void;
+  let resolveRequested!: () => void;
+  const releasePromise = new Promise<void>((resolve) => {
+    releaseMain = resolve;
+  });
+  const requested = new Promise<void>((resolve) => {
+    resolveRequested = resolve;
+  });
+
+  await page.route('**/pro/assets/welcome-*.js', async (route) => {
     resolveRequested();
     await releasePromise;
     await route.continue();
@@ -362,6 +383,83 @@ test.describe('server-rendered welcome page', () => {
     await expect(page.locator('#root footer a[href="/countries/"]')).toBeVisible();
     await expect(page.locator('#root footer a[href="https://github.com/koala73/worldmonitor"]')).toBeVisible();
   });
+
+  test('keeps the English prerender visible while its module is blocked', async ({ page }) => {
+    const delayedMain = await delayWelcomeMain(page);
+
+    try {
+      await page.goto('/pro/welcome.html?lang=en', { waitUntil: 'commit' });
+      await delayedMain.requested;
+
+      await expect(page.locator('#root[data-wm-prerender-lang="en"]')).toBeVisible();
+    } finally {
+      delayedMain.release();
+    }
+  });
+
+  for (const language of ['fr', 'ar']) {
+    test(`keeps the English prerender for ${language} when welcome copy falls back`, async ({ page }) => {
+      const pageErrors: string[] = [];
+      page.on('pageerror', (error) => pageErrors.push(error.message));
+      await page.addInitScript(() => {
+        const originalReplaceChildren = Element.prototype.replaceChildren;
+        Element.prototype.replaceChildren = function replaceChildren(...nodes) {
+          if (this.id === 'root') {
+            window.__wmWelcomeRootClearCount = (window.__wmWelcomeRootClearCount ?? 0) + 1;
+          }
+          return originalReplaceChildren.call(this, ...nodes);
+        };
+        window.requestIdleCallback = (callback) => window.setTimeout(() => {
+          callback({
+            didTimeout: false,
+            timeRemaining: () => 50,
+          });
+          window.__wmWelcomeHydrationDispatched = true;
+        }, 0);
+      });
+      const delayedMain = await delayWelcomeMain(page);
+
+      try {
+        await page.goto(`/pro/welcome.html?lang=${language}`, { waitUntil: 'commit' });
+        await delayedMain.requested;
+
+        const root = page.locator('#root[data-wm-prerender-lang="en"]');
+        await expect(root).toContainText("By the time it's news");
+        await expect(root).toBeVisible();
+        await expect.poll(async () => page.evaluate(() => ({
+          direction: getComputedStyle(document.documentElement).direction,
+          language: document.documentElement.lang,
+        }))).toEqual({
+          direction: 'ltr',
+          language: 'en',
+        });
+        expect(await page.evaluate(() => window.__wmWelcomeRootClearCount ?? 0)).toBe(0);
+
+        delayedMain.release();
+
+        await expect.poll(async () => page.evaluate(() => (
+          window.__wmWelcomeHydrationDispatched ?? false
+        ))).toBe(true);
+        await page.evaluate(() => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        await expect(root).toBeVisible();
+        await expect.poll(async () => page.evaluate(() => ({
+          direction: getComputedStyle(document.documentElement).direction,
+          language: document.documentElement.lang,
+          ogLocale: document.querySelector('meta[property="og:locale"]')?.getAttribute('content'),
+        }))).toEqual({
+          direction: 'ltr',
+          language: 'en',
+          ogLocale: 'en_US',
+        });
+        expect(await page.evaluate(() => window.__wmWelcomeRootClearCount ?? 0)).toBe(0);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        delayedMain.release();
+      }
+    });
+  }
 });
 
 test.describe('dashboard shell without JavaScript', () => {

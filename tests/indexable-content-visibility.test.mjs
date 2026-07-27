@@ -68,8 +68,20 @@ test('apex HTML exposes one visible SSR content hierarchy and all primary refere
 
 test('dashboard retains a legitimate no-JavaScript fallback and visible reference navigation', () => {
   const dashboard = read('index.html');
-  const noScript = dashboard.match(/<noscript>\s*<main id="dashboard-noscript"[\s\S]*?<\/main>\s*<\/noscript>/i)?.[0];
-  assert.ok(noScript, 'dashboard should contain a semantic #dashboard-noscript fallback');
+  const noScriptBlocks = [...dashboard.matchAll(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi)]
+    .map(([block]) => block);
+  assert.equal(noScriptBlocks.length, 1, 'dashboard should contain exactly one no-JavaScript content surface');
+  const [noScript] = noScriptBlocks;
+  assert.match(
+    noScript,
+    /<noscript>\s*<main id="dashboard-noscript"[\s\S]*?<\/main>\s*<\/noscript>/i,
+    'dashboard should contain a semantic #dashboard-noscript fallback',
+  );
+  assert.equal(
+    [...dashboard.matchAll(/\bid=["']dashboard-noscript["']/gi)].length,
+    1,
+    'dashboard should identify exactly one semantic no-JavaScript fallback',
+  );
   assert.match(noScript, /requires JavaScript/i);
   assert.doesNotMatch(noScript, /aria-hidden|inert|left:\s*-|clip(?:-path)?:/i);
 
