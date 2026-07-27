@@ -1,31 +1,41 @@
 /**
- * The Pro-MCP access decision, shared by every gate in the OAuth grant flow.
+ * The Pro-MCP access decision, shared by the five entitlement gates listed below.
  *
- * Three call sites re-implemented the same four-clause check
+ * Five call sites previously re-implemented the same four-clause check
  * (`tier >= 1 && mcpAccess === true && validUntil >= now`, plus the null case):
  *
  *   - `api/internal/mcp-grant-context.ts` — renders the consent card
  *   - `api/internal/mcp-grant-mint.ts`    — mints the signed grant
  *   - `api/oauth/authorize-pro.ts`        — finishes authorization on the
  *                                          api subdomain
+ *   - `api/mcp/auth.ts`                   — protects MCP-edge requests
+ *   - `server/gateway.ts`                 — re-checks signed internal MCP calls
  *
- * Each carried a comment saying "the two gates must agree", which is exactly
- * the kind of invariant a comment cannot enforce: the mcpAccess clause had to be
- * retro-fitted to all three in one review round precisely because gating on tier
- * alone let a user complete OAuth and then fail every tools/call.
+ * The decision lives here so the OAuth handshake cannot authorize an account
+ * that the MCP edge or gateway later rejects. Each caller keeps its own response
+ * envelope and telemetry (#5622, #5653).
  *
- * The decision lives here so those three cannot drift, and so the
- * retryable-vs-terminal split (#5622) reaches all three at once even though they
- * render it three different ways (JSON error vocabulary, JSON error vocabulary,
- * HTML page). Rendering stays with each caller; only the decision is shared.
+ * What this module owns, precisely: the ACCESS decision, for all five. The
+ * `ProMcpGateDenial` union is consumed as a rendered decision only by the three
+ * grant-flow callers (via `proMcpGateDenialResponse`). `api/mcp/auth.ts` and
+ * `server/gateway.ts` read the return value as pass/deny and render billing
+ * denials through their own helpers — which bottom out in the same
+ * `entitlement-check.ts::classifyBillingVerification`. That function, not this
+ * one, is the single source for billing classification.
  *
- * SCOPE — this owns the OAuth-grant flow, not every Pro-MCP check in the repo.
- * `api/mcp/auth.ts::checkMcpEntitlementGate` (the downstream MCP-edge gate the
- * three comments above say they mirror) and the gateway's own inline check still
- * spell the four clauses out themselves. They are the harder migration: their
- * denials are JSON-RPC envelopes with their own billing-denial helper and
- * telemetry, so folding them in is a separate change — tracked in #5653. Until
- * then "cannot drift" is a claim about these three call sites only.
+ * SCOPE — this does not own every Pro-MCP check in the repo. Two sites still
+ * spell the predicate out by hand and are deliberately NOT routed here:
+ *
+ *   - `server/_shared/premium-check.ts` (internal-MCP trusted-marker branch) —
+ *     tier + mcpAccess only, WITHOUT the `validUntil` clause. Safe today because
+ *     `server/gateway.ts` is the sole setter of the trusted markers that reach
+ *     it and applies this gate — validUntil included — before minting them. It
+ *     is a weaker second layer, not a mirror.
+ *   - `convex/mcpProTokens.ts::issueProMcpToken` — all four clauses, kept inline
+ *     because the Convex runtime does not import from `server/_shared`.
+ *
+ * Both are comment-enforced mirrors. Tighten the predicate below and you must
+ * check those two by hand; "cannot drift" is a claim about the five above only.
  */
 
 import {
@@ -38,7 +48,13 @@ import {
 export type ProMcpEntitlement = {
   features: { tier: number; mcpAccess?: boolean };
   validUntil: number;
-} & BillingVerificationInput;
+  /**
+   * Some request-layer dependency types expose the marker as boolean even
+   * though only literal true has billing semantics. False is normalized to
+   * absence before classification below.
+   */
+  verificationUnavailable?: boolean;
+} & Omit<BillingVerificationInput, 'verificationUnavailable'>;
 
 export type ProMcpGateDenial =
   /**
@@ -69,6 +85,7 @@ export function checkProMcpAccess(
 ): ProMcpGateDenial | null {
   if (
     entitlements &&
+    entitlements.features &&
     entitlements.features.tier >= 1 &&
     entitlements.features.mcpAccess === true &&
     entitlements.validUntil >= now
@@ -76,7 +93,29 @@ export function checkProMcpAccess(
     return null;
   }
 
-  const denial = classifyBillingVerification(entitlements);
+  // Spread, never a hand-copied field list: every member of
+  // BillingVerificationInput must reach the classifier by construction. That
+  // Pick has grown before (#5622 added two of its three members), and because
+  // its members are all OPTIONAL a literal that forgets a future one stays
+  // assignable — typecheck passes while the field is silently dropped and a
+  // retryable state renders as terminal. `premium-check.ts` (see the
+  // verificationUnavailable comment there) documents that exact regression
+  // already shipping once as #5600.
+  //
+  // Only the marker is overridden: ProMcpEntitlement widens it to `boolean` for
+  // request-layer dependency types, while BillingVerificationInput wants the
+  // literal `true`. False normalizes to absence, matching the truthiness test
+  // the classifier already applied. The annotation is load-bearing — it supplies
+  // the contextual type that stops that `true` from widening back to `boolean`.
+  // Spread members are exempt from excess-property checking, so the extra
+  // `features` / `validUntil` riding along are fine.
+  const billingInput: BillingVerificationInput | null | undefined = entitlements
+    ? {
+        ...entitlements,
+        verificationUnavailable: entitlements.verificationUnavailable === true ? true : undefined,
+      }
+    : entitlements;
+  const denial = classifyBillingVerification(billingInput);
   return denial ? { kind: 'billing_verification', denial } : { kind: 'insufficient_tier' };
 }
 

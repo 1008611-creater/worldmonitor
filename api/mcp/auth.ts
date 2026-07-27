@@ -15,6 +15,7 @@ import {
   getBillingVerificationDenial,
   getEntitlements,
 } from '../../server/_shared/entitlement-check';
+import { checkProMcpAccess } from '../../server/_shared/pro-mcp-gate';
 import type { BillingVerificationCode } from './billing-denial';
 import {
   buildInternalMcpHeaders,
@@ -455,24 +456,19 @@ async function checkMcpEntitlementGate(
     captureSilentError(err, { tags: { route: 'api/mcp', step: sentryStep }, ctx });
     return rejected();
   }
-  const tier = ent?.features?.tier ?? 0;
-  const mcpAccess = ent?.features?.mcpAccess === true;
-  const validUntil = ent?.validUntil ?? 0;
   const passed = (): McpPreCheckResult => ({
     ok: true,
     mcpDailyLimit: resolvePlanDrivenMcpAllowance(ent?.planKey, ent?.features?.planLimits?.mcpCallsPerDay),
   });
-  // Renewal uncertainty on a stronger subscription must not revoke MCP when
-  // a separate, current fallback subscription still authorizes MCP access.
-  if (ent && tier >= 1 && mcpAccess && validUntil >= Date.now()) {
+  // Single-source Pro MCP decision. A current fallback entitlement still wins
+  // over billing uncertainty; this caller keeps the JSON-RPC denial rendering.
+  const gate = checkProMcpAccess(ent, Date.now());
+  if (!gate) {
     return passed();
   }
   const billingDenial = getMcpBillingVerificationDenial(ent, corsHeaders);
   if (billingDenial) return { ok: false, response: billingDenial };
-  if (!ent || tier < 1 || !mcpAccess || validUntil < Date.now()) {
-    return rejected();
-  }
-  return passed();
+  return rejected();
 }
 
 /**
