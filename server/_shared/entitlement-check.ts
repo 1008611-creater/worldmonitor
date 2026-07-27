@@ -393,6 +393,20 @@ export function getRequiredTier(pathname: string): number | null {
 }
 
 /**
+ * Every tier-gated pathname, as a set.
+ *
+ * Exported so tests/premium-paths-guard.test.mts can enforce that this map
+ * stays a subset of PREMIUM_RPC_PATHS — an invariant src/services/premium-fetch.ts
+ * documents and depends on, but which nothing checked before #5674. The gateway
+ * sets `forceKey` on tier-gated routes, and forceKey rejects a valid anonymous
+ * wms_ token with 401, so a route added here but not there 401s every anonymous
+ * browser call and drives the wm-session interceptor into its mint→replay→
+ * 15-minute-blackout loop. The map itself stays private so it keeps its single
+ * point of edit.
+ */
+export const TIER_GATED_PATHS: ReadonlySet<string> = new Set(Object.keys(ENDPOINT_ENTITLEMENTS));
+
+/**
  * Fetches entitlements for a user. Tries Redis cache first (raw key),
  * then falls back to ConvexHttpClient query on cache miss.
  *
