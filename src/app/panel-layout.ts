@@ -143,6 +143,13 @@ const WEB_CLERK_PRO_ONLY_PANELS = new Set([
 
 const COLLIDING_NEWS_PANEL_KEYS = new Set(['markets', 'crypto', 'economic']);
 
+const DASHBOARD_REFERENCE_LINKS = [
+  { label: 'Countries', path: '/countries/' },
+  { label: 'Chokepoints', path: '/chokepoints/' },
+  { label: 'Crises', path: '/crises/' },
+  { label: 'Tools', path: '/tools/' },
+] as const;
+
 // TEMPORARY MIRROR of each panel constructor's footprint (`defaultRowSpan` /
 // `className: 'panel-wide'`, declared in src/components/*Panel.ts). A deferred
 // shell never instantiates its component, so it cannot read that footprint
@@ -783,6 +790,10 @@ export class PanelLayoutManager implements AppModule {
     // (which shoved #panelsGrid up 698px, field CLS ~0.62 for this cohort).
     const mapStartsCollapsed = this.ctx.isMobile && PanelLayoutManager.isMobileMapCollapsedPreferred();
     const bootShellFootprint = import.meta.env.DEV ? captureBootShellFootprint(this.ctx.container) : null;
+    const referenceLinksHtml = DASHBOARD_REFERENCE_LINKS.map(({ label, path }) => {
+      const href = this.ctx.isDesktopApp ? `https://www.worldmonitor.app${path}` : path;
+      return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+    }).join('');
 
     markLcpDebug('wm:layout:render-start');
     document.documentElement.classList.add('wm-layout-hydrated');
@@ -949,7 +960,8 @@ export class PanelLayoutManager implements AppModule {
         </a>
         <div class="mobile-menu-divider"></div>
         <div class="mobile-menu-footer-links">
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/pro' : 'https://www.worldmonitor.app/pro'}" target="_blank" rel="noopener">Pro</a>
+          ${referenceLinksHtml}
+          <a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">Pricing</a>
           <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">Blog</a>
           <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">Docs</a>
           <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">Status</a>
@@ -1017,7 +1029,8 @@ export class PanelLayoutManager implements AppModule {
           </div>
         </div>
         <nav>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/pro' : 'https://www.worldmonitor.app/pro'}" target="_blank" rel="noopener">Pro</a>
+          ${referenceLinksHtml}
+          <a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">Pricing</a>
           <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">Blog</a>
           <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">Docs</a>
           <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">Status</a>

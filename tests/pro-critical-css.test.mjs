@@ -109,7 +109,7 @@ describe('pro critical CSS parser', () => {
 describe('pro critical CSS source contract', () => {
   it('applies the shared critical CSS transform to every pro-test page', () => {
     const prerender = src('pro-test/prerender.mjs');
-    assert.match(prerender, /html\.js #seo-prerender/);
+    assert.doesNotMatch(prerender, /seo-prerender/);
     assert.match(prerender, /const PAGES = \[/);
     assert.match(prerender, /html = inlineCriticalCss\(html, file\);/);
     assert.doesNotMatch(prerender, /file === 'welcome\.html'/);
@@ -129,7 +129,7 @@ describe('pro built HTML critical CSS contract', () => {
       assert.ok(previousStyles.length > 0, `${relPath} should inline critical CSS before the deferred preload`);
       const criticalCss = previousStyles.join('\n');
       assert.match(criticalCss, /#root,#root>div/);
-      assert.match(criticalCss, /html\.js #seo-prerender/);
+      assert.doesNotMatch(criticalCss, /html\.js #seo-prerender/);
     });
 
     it(`${label} has no render-blocking stylesheet outside noscript`, () => {
@@ -185,31 +185,20 @@ describe('pro built HTML critical CSS contract', () => {
     });
   }
 
-  it('/pro preserves crawler-visible prerendered content while JS browsers can hide it', () => {
+  it('/pro uses its existing no-JavaScript fallback without a hidden duplicate', () => {
     const html = builtSrc('public/pro/index.html');
-    assert.match(html, /id="seo-prerender"/);
+    assert.match(html, /<div id="root"><\/div>\s*<noscript>/);
     assert.match(html, /World Monitor Pro/);
-    assert.match(html, /document\.documentElement\.classList\.add\('js'\)/);
-    assert.match(html, /html\.js #seo-prerender/);
+    assert.doesNotMatch(html, /id="seo-prerender"/);
+    assert.doesNotMatch(html, /html\.js #seo-prerender/);
   });
 
-  it('/ welcome ships a crawler-visible SEO block kept OUT of the hydrated #root', () => {
+  it('/ welcome ships its real, user-visible SSR app without a hidden sibling', () => {
     const html = builtSrc('public/pro/welcome.html');
     assert.match(html, /data-wm-prerendered="welcome"/);
-    // welcome.html now ships a prose-dense #seo-prerender block for AEO/RAG
-    // indexers (lifts the apex page's text-to-markup ratio), injected as a
-    // SIBLING BEFORE #root so React hydration of the SSR'd shell is untouched.
-    // Hidden for JS users via the .js class + html.js #seo-prerender rule,
-    // mirroring /pro (above). pro-welcome-prerender.test.mjs enforces that the
-    // hydrated #root CONTENT stays free of the block; here we guard placement
-    // (block must PRECEDE #root) and the JS-hide mechanism.
-    assert.match(html, /id="seo-prerender"/);
-    assert.match(html, /document\.documentElement\.classList\.add\('js'\)/);
-    assert.match(html, /html\.js #seo-prerender/);
-    assert.ok(
-      html.indexOf('id="seo-prerender"') < html.indexOf('<div id="root"'),
-      'the #seo-prerender block must precede #root (sibling, not nested — nesting it inside the hydrated root breaks hydration)',
-    );
+    assert.doesNotMatch(html, /id="seo-prerender"/);
+    assert.doesNotMatch(html, /html\.js #seo-prerender/);
+    assert.match(html, /<h1\b/);
     assert.match(html, /fetchPriority="high"/);
   });
 });

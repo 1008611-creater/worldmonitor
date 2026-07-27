@@ -449,7 +449,6 @@ function claims(s) {
     { file: 'CONTRIBUTING.md', re: /expand our (\d+)\+\s+feed collection/, value: s.feedDefinitions, min: true },
     { file: 'SECURITY.md', re: /All (\d+)\s+domain APIs are served through Sebuf/, value: s.serverDomains },
     { file: 'index.html', re: /"(\d+)\s+language support with RTL"/, value: s.locales },
-    { file: 'index.html', re: /multilingual \((\d+)\s+locales\)/, value: s.locales },
 
     { file: 'docs/architecture.mdx', re: /(\d+)\s+service domains, and (?:\d+)\s+map layers/, value: s.protoServices },
     { file: 'docs/architecture.mdx', re: /(\d+)\s+map layers\./, value: s.layerDefinitions },
