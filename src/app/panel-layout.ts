@@ -305,6 +305,7 @@ function warnOnBootShellFootprintDrift(snapshot: BootShellFootprintSnapshot): vo
 export interface PanelLayoutManagerCallbacks {
   openCountryStory: (code: string, name: string) => void;
   openCountryBrief: (code: string) => void;
+  openSearch: () => void;
   loadAllData: (forceAll?: boolean) => Promise<void>;
   updateMonitorResults: () => void;
   loadSecurityAdvisories?: () => Promise<void>;
@@ -385,6 +386,7 @@ export class PanelLayoutManager implements AppModule {
     this.proActivationController = new ProActivationController(ctx, {
       reloadPending: returnedFromCheckout,
       openAiAnalyst: () => this.revealAnalystPanel(),
+      openSearch: callbacks.openSearch,
     });
     if (returnedFromCheckout) {
       // Funnel (#4931): the purchase-complete signal on the client side.

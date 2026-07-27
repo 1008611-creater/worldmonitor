@@ -2324,6 +2324,7 @@
           "summaryVerified": "अनलॉक और तैयार, जब आप हों।",
           "channelsNote": "Telegram, Slack, Discord या वेबहुक पसंद करेंगे?",
           "pointers": {
+            "search": "पूरे डैशबोर्ड में खोजें",
             "widgets": "एक कस्टम विजेट बनाएं",
             "analyst": "AI विश्लेषक से पूछें",
             "mcpClients": "MCP सेट करें",

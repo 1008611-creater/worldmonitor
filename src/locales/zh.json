@@ -2255,6 +2255,7 @@
           "summaryVerified": "已解锁，随时可用。",
           "channelsNote": "更喜欢 Telegram、Slack、Discord 还是 Webhook？",
           "pointers": {
+            "search": "搜索整个仪表板",
             "widgets": "创建自定义小组件",
             "analyst": "咨询 AI 分析师",
             "mcpClients": "设置 MCP",

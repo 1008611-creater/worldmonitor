@@ -2343,6 +2343,7 @@
           "summaryVerified": "Unlocked and ready when you are.",
           "channelsNote": "Prefer Telegram, Slack, Discord, or a webhook?",
           "pointers": {
+            "search": "Search the entire dashboard",
             "widgets": "Build a custom widget",
             "analyst": "Ask the AI analyst",
             "mcpClients": "Set up MCP",

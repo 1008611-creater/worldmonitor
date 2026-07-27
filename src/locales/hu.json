@@ -2324,6 +2324,7 @@
           "summaryVerified": "Feloldva és készen áll, amikor Ön is az.",
           "channelsNote": "Inkább Telegramot, Slacket, Discordot vagy egy webhookot szeretne?",
           "pointers": {
+            "search": "Keresés a teljes irányítópulton",
             "widgets": "Egyéni widget létrehozása",
             "analyst": "Kérdezze meg az AI elemzőt",
             "mcpClients": "MCP beállítása",

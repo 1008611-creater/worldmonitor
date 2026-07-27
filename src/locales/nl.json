@@ -1995,6 +1995,7 @@
           "summaryVerified": "Ontgrendeld en klaar wanneer jij dat bent.",
           "channelsNote": "Heb je liever Telegram, Slack, Discord of een webhook?",
           "pointers": {
+            "search": "Het hele dashboard doorzoeken",
             "widgets": "Een aangepaste widget maken",
             "analyst": "Stel de AI-analist een vraag",
             "mcpClients": "MCP instellen",

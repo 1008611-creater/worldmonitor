@@ -2255,6 +2255,7 @@
           "summaryVerified": "Kilidi açıldı, siz hazır olduğunuzda kullanıma hazır.",
           "channelsNote": "Telegram, Slack, Discord veya bir webhook mu tercih edersiniz?",
           "pointers": {
+            "search": "Tüm panoda ara",
             "widgets": "Özel bir widget oluşturun",
             "analyst": "Yapay zeka analistine sorun",
             "mcpClients": "MCP'yi kurun",

@@ -8191,6 +8191,36 @@ a.prediction-link:hover {
   background: color-mix(in srgb, var(--green) 8%, transparent);
 }
 
+.pro-activation-pointer:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.pro-activation-pointer-label {
+  min-width: 0;
+}
+
+.pro-activation-pointer-shortcut {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.pro-activation-pointer-shortcut kbd {
+  min-width: 26px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--green);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+
 .pro-activation-pointer-arrow {
   color: var(--text-dim);
 }

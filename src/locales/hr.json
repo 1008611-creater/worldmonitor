@@ -2501,6 +2501,7 @@
           "summaryVerified": "Otključano i spremno kad i vi budete.",
           "channelsNote": "Preferirate Telegram, Slack, Discord ili webhook?",
           "pointers": {
+            "search": "Pretraži cijelu nadzornu ploču",
             "widgets": "Izradi prilagođeni widget",
             "analyst": "Pitaj AI analitičara",
             "mcpClients": "Postavi MCP",

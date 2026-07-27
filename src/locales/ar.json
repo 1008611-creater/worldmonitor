@@ -2291,6 +2291,7 @@
           "summaryVerified": "غير مقفلة وجاهزة عندما تكون جاهزًا.",
           "channelsNote": "تفضّل Telegram أو Slack أو Discord أو webhook؟",
           "pointers": {
+            "search": "البحث في لوحة المعلومات بالكامل",
             "widgets": "إنشاء أداة مخصصة",
             "analyst": "اسأل المحلل الذكي",
             "mcpClients": "إعداد MCP",
