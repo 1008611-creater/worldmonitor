@@ -72,12 +72,13 @@ function applyMetaTags(prefix = 'meta'): void {
 // `i18nextLng=en` stamp from any earlier visit would otherwise pin a French
 // browser to English forever and silently bury the localized copy we ship.
 //
-// CONSEQUENCE: the `?lang=` querystring is EPHEMERAL — it does not persist
-// across in-page navigations that strip the search string. The hreflang
-// `?lang=XX` URLs in <head> are the canonical shareable/bookmarkable
-// locale-stable links. If anyone ever adds in-page links from /pro that
-// drop ?lang=, they need to either propagate the param or surface a
-// language switcher; otherwise the recipient lands on browser-default.
+// CONSEQUENCE: the `?lang=` querystring is EPHEMERAL application state — it
+// does not persist across in-page navigations that strip the search string.
+// Shareable/bookmarkable locale URLs therefore need to retain `?lang=XX`, but
+// they remain base-canonical and are not advertised as indexable hreflang
+// documents. If anyone adds in-page links that drop ?lang=, they need to
+// propagate the param or surface a language switcher; otherwise the recipient
+// lands on browser-default.
 export async function initI18n(options?: { metaPrefix?: string }): Promise<void> {
   const metaPrefix = options?.metaPrefix ?? 'meta';
   if (i18next.isInitialized) return;
