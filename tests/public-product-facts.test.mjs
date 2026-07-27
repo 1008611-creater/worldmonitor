@@ -191,12 +191,12 @@ describe('public product facts generation contract', () => {
     const apiMonthly = displayPrice(plans.api_starter.price);
     const apiAnnual = displayPrice(plans.api_starter_annual.price);
     const businessMonthly = displayPrice(plans.api_business.price);
-    for (const path of ['pro-test/prerender.mjs', 'public/pro/index.html', 'public/pro/welcome.html']) {
-      const source = read(path);
-      assert.match(source, new RegExp(`\\$${proMonthly.replace('.', '\\.')}[^\\d]`), `${path}: Pro monthly`);
-      assert.match(source, new RegExp(`\\$${proAnnual.replace('.', '\\.')}[^\\d]`), `${path}: Pro annual`);
+    // The Pro app reads the generated tier values asserted above; the welcome
+    // source and its committed SSR output also surface the monthly entry price.
+    // Do not require the prerender script to carry a second crawler-only copy.
+    for (const path of ['pro-test/welcome.html', 'public/pro/welcome.html']) {
+      assert.match(read(path), new RegExp(`\\$${proMonthly.replace('.', '\\.')}[^\\d]`), `${path}: Pro monthly`);
     }
-    assert.match(read('pro-test/welcome.html'), new RegExp(`\\$${proMonthly.replace('.', '\\.')}[^\\d]`));
 
     for (const path of ['docs/pricing.mdx', 'docs/zh/pricing.mdx', 'public/pricing.md']) {
       const source = read(path);
