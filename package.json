@@ -124,6 +124,8 @@
     "desktop:package:windows:tech:sign": "node scripts/desktop-package.mjs --os windows --variant tech --sign",
     "desktop:package": "node scripts/desktop-package.mjs",
     "test:convex": "vitest run --config vitest.config.mts",
+    "test:dom": "vitest run --config vitest.dom.config.mts",
+    "typecheck:dom-tests": "tsc --noEmit -p tsconfig.dom-tests.json",
     "test:convex:watch": "vitest --config vitest.config.mts"
   },
   "devDependencies": {
@@ -148,6 +150,7 @@
     "cross-env": "^10.1.0",
     "esbuild": "0.28.1",
     "exceljs": "^4.4.0",
+    "happy-dom": "^20.11.1",
     "markdownlint-cli2": "^0.21.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2",
