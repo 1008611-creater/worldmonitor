@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   main,
-  MAX_CONSECUTIVE_RATE_LIMITED,
+  MAX_CONSECUTIVE_RATE_LIMITED_FETCHES,
   MAX_PRESERVE_RUNS,
   MIN_COUNTRY_COVERAGE,
   __setSleepForTests,
@@ -37,8 +37,11 @@ let priorMeta = null;
 /** How many countries the mocked Comtrade should return rows for. */
 let countriesWithData = 0;
 let comtradeCallCount = 0;
+let rateLimitWaitCount = 0;
 /** When true, every Comtrade call answers 429 (quota exhausted). */
 let rateLimitEverything = false;
+/** When true, every Comtrade call answers 503 and consumes all retry slots. */
+let transientEverything = false;
 
 function respond(body) {
   return new Response(JSON.stringify(body), { status: 200 });
@@ -69,7 +72,9 @@ beforeEach(() => {
   priorMeta = null;
   countriesWithData = 0;
   comtradeCallCount = 0;
+  rateLimitWaitCount = 0;
   rateLimitEverything = false;
+  transientEverything = false;
 
   process.env.UPSTASH_REDIS_REST_URL = REDIS_URL;
   process.env.UPSTASH_REDIS_REST_TOKEN = 'fake-token';
@@ -77,7 +82,10 @@ beforeEach(() => {
   // through; FORCE_RESEED would bypass the gate under test rather than exercise it.
   delete process.env.FORCE_RESEED;
 
-  __setSleepForTests(() => Promise.resolve());
+  __setSleepForTests((delayMs) => {
+    if (delayMs === 60_000) rateLimitWaitCount++;
+    return Promise.resolve();
+  });
 
   globalThis.fetch = (async (input, init) => {
     const href = String(input);
@@ -92,6 +100,7 @@ beforeEach(() => {
     if (href.includes('comtradeapi.un.org')) {
       comtradeCallCount++;
       if (rateLimitEverything) return new Response('{}', { status: 429 });
+      if (transientEverything) return new Response('{}', { status: 503 });
       // Two batches per country; give the first N countries real rows.
       const countryIndex = Math.floor((comtradeCallCount - 1) / 2);
       if (countryIndex < countriesWithData) {
@@ -208,10 +217,9 @@ test('an exhausted quota aborts the run instead of outliving the lock', async ()
 
   await main();
 
-  const countriesAttempted = comtradeCallCount / 2;
   assert.ok(
-    countriesAttempted <= MAX_CONSECUTIVE_RATE_LIMITED + 1,
-    `should bail after ~${MAX_CONSECUTIVE_RATE_LIMITED} rate-limited reporters, attempted ${countriesAttempted}`,
+    rateLimitWaitCount <= MAX_CONSECUTIVE_RATE_LIMITED_FETCHES,
+    `should bail after ${MAX_CONSECUTIVE_RATE_LIMITED_FETCHES} one-minute rate-limit waits, waited ${rateLimitWaitCount} times`,
   );
   assert.ok(comtradeCallCount < 100, `must not grind the full roster; made ${comtradeCallCount} calls`);
 });
@@ -223,5 +231,19 @@ test('an aborted run still records its partial result', async () => {
 
   const meta = writtenMeta();
   assert.equal(meta.status, 'partial', 'the operator must see the run degraded, not silence');
+  assert.equal(meta.recordCount, 0);
+});
+
+test('the request budget counts retry attempts, not only logical batch fetches', async () => {
+  // A single logical fetch can make three upstream attempts after transient
+  // failures. The monthly quota applies to those real HTTP requests, so the
+  // hard cap must be enforced inside the retry loop.
+  transientEverything = true;
+
+  await main({ requestBudget: 2 });
+
+  assert.equal(comtradeCallCount, 2, 'a transient retry must not cross the hard request cap');
+  const meta = writtenMeta();
+  assert.equal(meta.status, 'partial');
   assert.equal(meta.recordCount, 0);
 });

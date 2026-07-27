@@ -16,6 +16,7 @@ import { lazyFetchBilateralHs4 } from '../server/worldmonitor/supply-chain/v1/_b
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let fetchCalls: string[] = [];
+let upstreamData: unknown[] = [];
 
 // Only the upstream calls. The module also talks to Upstash over REST through
 // the same global fetch, so asserting on the raw list would make these tests
@@ -27,6 +28,7 @@ const comtradeCalls = () => fetchCalls.filter(u => u.includes('comtradeapi.un.or
 
 beforeEach(() => {
   fetchCalls = [];
+  upstreamData = [];
   globalThis.fetch = (async (url: string | URL | Request) => {
     const href = String(url);
     fetchCalls.push(href);
@@ -34,7 +36,7 @@ beforeEach(() => {
       // Stub Upstash REST so the code path is identical either way.
       return new Response(JSON.stringify({ result: null }), { status: 200 });
     }
-    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    return new Response(JSON.stringify({ data: upstreamData }), { status: 200 });
   }) as typeof fetch;
 });
 
@@ -88,6 +90,41 @@ test('both producers of the shared key request the SAME HS4 catalogue', async ()
   const requested = (new URL(comtradeCalls()[0]).searchParams.get('cmdCode') ?? '').split(',');
 
   assert.deepEqual([...requested].sort(), [...expected].sort());
+});
+
+test('lazy payload descriptions match the shared HS4 catalogue', async () => {
+  // Codes and labels are one contract because the bulk and lazy producers
+  // write the same Redis payload. Deriving only the code list still lets the
+  // user-facing description drift when catalogue metadata changes.
+  const metadata = JSON.parse(
+    readFileSync(
+      join(import.meta.dirname, '..', 'scripts', 'shared', 'comtrade-strategic-products.json'),
+      'utf8',
+    ),
+  ) as {
+    products: Array<{ bilateralHs4Code?: string; bilateralLabel?: string; label: string }>;
+  };
+  const bilateralProducts = metadata.products.filter(
+    (product): product is { bilateralHs4Code: string; bilateralLabel?: string; label: string } => (
+      typeof product.bilateralHs4Code === 'string'
+    ),
+  );
+
+  for (const product of bilateralProducts) {
+    upstreamData = [{
+      cmdCode: product.bilateralHs4Code,
+      partnerCode: '156',
+      primaryValue: 1000,
+      period: Number(recentPeriod()),
+    }];
+
+    const result = await lazyFetchBilateralHs4('DE');
+    assert.equal(
+      result?.products[0]?.description,
+      product.bilateralLabel ?? product.label,
+      `description drifted for HS4 ${product.bilateralHs4Code}`,
+    );
+  }
 });
 
 test('lazy fallback reports empty (not products) when upstream returns zero rows', async () => {

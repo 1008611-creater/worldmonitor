@@ -122,7 +122,7 @@ const INTER_REQUEST_DELAY_MS = usePublicApi ? 3500 : 1500;
 // UN Comtrade's 500/mo Free APIs quota. The (y-3) fallback below doubles that
 // for any reporter empty on (y-2), so cap total requests with slack under the
 // cap rather than risk a bad month (e.g. many slow filers) blowing the quota.
-const REQUEST_BUDGET = Number(process.env.COMTRADE_REQUEST_BUDGET) || 480;
+export const REQUEST_BUDGET = Number(process.env.COMTRADE_REQUEST_BUDGET) || 480;
 
 // Comtrade annual data lags across reporters. Without an explicit period the
 // API currently returns HTTP 200 with count=0, so every country is silently
@@ -242,9 +242,9 @@ export function isTransientComtrade(status) {
 // 429 of every call, so once the quota is gone a full pass sits through ~394 of
 // those waits — about 6.6 hours against a 30-minute LOCK_TTL_MS. The lock would
 // expire mid-run and the next tick could start a second run on top of it. Five
-// consecutive rate-limited reporters is ~10 minutes, well inside the lock, and
-// by then the quota verdict is not in doubt.
-export const MAX_CONSECUTIVE_RATE_LIMITED = 5;
+// consecutive rate-limited batch fetches is ~5 minutes plus normal request
+// pacing, well inside the lock, and by then the quota verdict is not in doubt.
+export const MAX_CONSECUTIVE_RATE_LIMITED_FETCHES = 5;
 let consecutiveRateLimited = 0;
 /** Reset at the start of every run; also lets tests isolate module state. */
 export function resetRateLimitStreak() { consecutiveRateLimited = 0; }
@@ -264,7 +264,17 @@ export function __setSleepForTests(fn) {
   _paceSleep = next;
 }
 
-async function fetchBilateralOnce(url, timeoutMs = 45_000) {
+/**
+ * @param {string} url
+ * @param {number} [timeoutMs]
+ * @param {(() => void) | undefined} [reserveRequest]
+ */
+async function fetchBilateralOnce(url, timeoutMs = 45_000, reserveRequest) {
+  // Reserve immediately before the network call so retries count against the
+  // same hard quota budget as first attempts. A logical batch fetch may issue
+  // up to four upstream requests (one 429 retry plus two transient-5xx
+  // retries), so counting only fetchBilateral() calls can exceed the cap.
+  reserveRequest?.();
   return fetch(url, {
     headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
     signal: AbortSignal.timeout(timeoutMs),
@@ -289,16 +299,21 @@ function buildFetchUrl(reporterCode, hs4Batch, key, period) {
  * @param {string} reporterCode
  * @param {string[]} hs4Batch
  * @param {string} [period]
+ * @param {(() => void) | undefined} [reserveRequest]
  * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
  */
-export async function fetchBilateral(reporterCode, hs4Batch, period = recentPeriod()) {
+export async function fetchBilateral(reporterCode, hs4Batch, period = recentPeriod(), reserveRequest) {
   let rateLimitedOnce = false;
   let transientRetries = 0;
   const MAX_TRANSIENT_RETRIES = 2;
 
   let resp;
   while (true) {
-    resp = await fetchBilateralOnce(buildFetchUrl(reporterCode, hs4Batch, getNextKey(), period));
+    resp = await fetchBilateralOnce(
+      buildFetchUrl(reporterCode, hs4Batch, getNextKey(), period),
+      45_000,
+      reserveRequest,
+    );
 
     if (resp.status === 429 && !rateLimitedOnce) {
       console.warn(`  429 rate-limited for reporter ${reporterCode}, waiting 60s...`);
@@ -412,9 +427,15 @@ export function groupByProduct(records, fallbackYear = Number(recentPeriod())) {
   return products.sort((a, b) => b.totalValue - a.totalValue);
 }
 
-export async function main() {
+/**
+ * @param {{ requestBudget?: number }} [options]
+ */
+export async function main({ requestBudget = REQUEST_BUDGET } = {}) {
   const startedAt = Date.now();
   const runId = `${LOCK_DOMAIN}:${startedAt}`;
+  const effectiveRequestBudget = Number.isFinite(requestBudget) && requestBudget > 0
+    ? Math.floor(requestBudget)
+    : REQUEST_BUDGET;
 
   // Freshness gate: skip if seed-meta says we re-seeded < 24d ago.
   // One run = ~396 authenticated UN Comtrade calls; their Free APIs tier is
@@ -468,6 +489,14 @@ export async function main() {
     let writtenCount = 0;
     let failedCount = 0;
     let requestCount = 0;
+    let requestBudgetExhausted = false;
+    const reserveRequest = () => {
+      if (requestCount >= effectiveRequestBudget) {
+        requestBudgetExhausted = true;
+        throw new Error(`Comtrade request budget reached (${requestCount}/${effectiveRequestBudget})`);
+      }
+      requestCount++;
+    };
 
     for (let i = 0; i < countries.length; i++) {
       const [iso2] = countries[i];
@@ -475,6 +504,15 @@ export async function main() {
       if (!unCode) {
         console.warn(`  ${iso2}: no UN code, skipping`);
         continue;
+      }
+
+      // A complete reporter needs two batch requests. Avoid starting one when
+      // the remaining budget cannot cover both; reserveRequest is the hard
+      // backstop when retries consume the remaining slack mid-reporter.
+      if (requestCount + 2 > effectiveRequestBudget) {
+        requestBudgetExhausted = true;
+        console.warn(`[bilateral-hs4] Request budget reached (${requestCount}/${effectiveRequestBudget}) before ${iso2}; writing the partial result.`);
+        break;
       }
 
       if (requestCount > 0) await _paceSleep(INTER_REQUEST_DELAY_MS);
@@ -485,21 +523,21 @@ export async function main() {
         let usedPeriod = PERIODS[0];
 
         for (let p = 0; p < PERIODS.length; p++) {
-          if (p > 0 && requestCount + 2 > REQUEST_BUDGET) {
-            console.warn(`    ${iso2}: skipping fallback period ${PERIODS[p]} — request budget reached (${requestCount}/${REQUEST_BUDGET})`);
+          if (p > 0 && requestCount + 2 > effectiveRequestBudget) {
+            console.warn(`    ${iso2}: skipping fallback period ${PERIODS[p]} — request budget reached (${requestCount}/${effectiveRequestBudget})`);
             break;
           }
           usedPeriod = PERIODS[p];
 
           console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 1/2 (period ${usedPeriod})...`);
-          batch1 = await fetchBilateral(unCode, BATCH_1, usedPeriod);
-          requestCount++;
+          batch1 = await fetchBilateral(unCode, BATCH_1, usedPeriod, reserveRequest);
+          if (consecutiveRateLimited >= MAX_CONSECUTIVE_RATE_LIMITED_FETCHES) break;
 
           await _paceSleep(INTER_REQUEST_DELAY_MS);
 
           console.log(`  [${i + 1}/${countries.length}] ${iso2} batch 2/2 (period ${usedPeriod})...`);
-          batch2 = await fetchBilateral(unCode, BATCH_2, usedPeriod);
-          requestCount++;
+          batch2 = await fetchBilateral(unCode, BATCH_2, usedPeriod, reserveRequest);
+          if (consecutiveRateLimited >= MAX_CONSECUTIVE_RATE_LIMITED_FETCHES) break;
 
           if (batch1.length > 0 || batch2.length > 0) break;
           if (p < PERIODS.length - 1) {
@@ -531,8 +569,12 @@ export async function main() {
         await redisPipeline(commands.splice(0));
       }
 
-      if (consecutiveRateLimited >= MAX_CONSECUTIVE_RATE_LIMITED) {
-        console.warn(`[bilateral-hs4] ABORTING after ${consecutiveRateLimited} consecutive rate-limited reporters — the monthly quota looks exhausted. Writing the partial result rather than grinding through ~${countries.length - i - 1} more 60s waits and outliving the ${LOCK_TTL_MS / 60_000}min lock.`);
+      if (consecutiveRateLimited >= MAX_CONSECUTIVE_RATE_LIMITED_FETCHES) {
+        console.warn(`[bilateral-hs4] ABORTING after ${consecutiveRateLimited} consecutive rate-limited batch fetches — the monthly quota looks exhausted. Writing the partial result rather than grinding through ~${countries.length - i - 1} more 60s waits and outliving the ${LOCK_TTL_MS / 60_000}min lock.`);
+        break;
+      }
+      if (requestBudgetExhausted) {
+        console.warn(`[bilateral-hs4] ABORTING at the hard request budget (${requestCount}/${effectiveRequestBudget}). Writing the partial result.`);
         break;
       }
     }

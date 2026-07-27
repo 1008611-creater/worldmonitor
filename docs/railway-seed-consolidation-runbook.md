@@ -575,18 +575,18 @@ entries.
 >
 > To verify one yourself (reads `cronSchedule` for every service in the
 > project; the CLI stores the token at `~/.railway/config.json`):
->
-> ```bash
-> railway whoami   # confirm you are logged in, then query the API:
-> node -e "const c=require(require('os').homedir()+'/.railway/config.json');
-> fetch('https://backboard.railway.com/graphql/v2',{method:'POST',
->  headers:{'Content-Type':'application/json',Authorization:'Bearer '+(c.user.token||c.user.accessToken)},
->  body:JSON.stringify({query:'query(\$id:String!){project(id:\$id){services{edges{node{name serviceInstances{edges{node{cronSchedule}}}}}}}}',
->  variables:{id:'29419572-0b0d-437f-8e71-4fa68daf514f'}})})
->  .then(r=>r.json()).then(d=>d.data.project.services.edges.forEach(e=>{
->    const cs=e.node.serviceInstances.edges.map(x=>x.node.cronSchedule).filter(Boolean);
->    if(cs.length)console.log(e.node.name.padEnd(40),cs.join(','));}))"
-> ```
+
+```bash
+railway whoami   # confirm you are logged in, then query the API:
+node -e "const c=require(require('os').homedir()+'/.railway/config.json');
+fetch('https://backboard.railway.com/graphql/v2',{method:'POST',
+ headers:{'Content-Type':'application/json',Authorization:'Bearer '+(c.user.token||c.user.accessToken)},
+ body:JSON.stringify({query:'query(\$id:String!){project(id:\$id){services{edges{node{name serviceInstances{edges{node{cronSchedule}}}}}}}}',
+ variables:{id:'29419572-0b0d-437f-8e71-4fa68daf514f'}})})
+ .then(r=>r.json()).then(d=>d.data.project.services.edges.forEach(e=>{
+   const cs=e.node.serviceInstances.edges.map(x=>x.node.cronSchedule).filter(Boolean);
+   if(cs.length)console.log(e.node.name.padEnd(40),cs.join(','));}))"
+```
 
 | Service | Start command | Inferred cadence | Domain |
 |---|---|---|---|

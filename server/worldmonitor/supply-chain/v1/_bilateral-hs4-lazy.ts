@@ -41,24 +41,23 @@ const FETCH_TIMEOUT_MS = 5000;
 // list. Both write the SAME Redis key, so a product added to the catalogue
 // would otherwise land in the seeder's payloads and be silently absent from
 // every payload this fallback produces, with nothing to surface the drift.
-const HS4_CODES = Array.from(new Set(
-  (strategicProductMetadata.products as Array<{ bilateralHs4Code?: string }>)
-    .map(p => p.bilateralHs4Code)
-    .filter((code): code is string => typeof code === 'string' && code.length > 0),
-));
+interface BilateralProductMetadata {
+  bilateralHs4Code: string;
+  bilateralLabel?: string;
+  label: string;
+}
 
-const HS4_LABELS: Record<string, string> = {
-  '2709': 'Crude Petroleum', '2711': 'LNG & Petroleum Gas',
-  '8542': 'Semiconductors', '8517': 'Smartphones & Telecom',
-  '8703': 'Passenger Vehicles', '3004': 'Pharmaceuticals',
-  '7108': 'Gold', '2710': 'Refined Petroleum',
-  '8471': 'Computers', '8411': 'Turbojets & Turbines',
-  '7601': 'Aluminium', '7202': 'Ferroalloys (Steel)',
-  '3901': 'Plastics (Polyethylene)', '2902': 'Chemicals (Hydrocarbons)',
-  '1001': 'Wheat', '1201': 'Soybeans',
-  '6204': 'Women\'s Suits (Woven)', '0203': 'Pork',
-  '8704': 'Commercial Vehicles', '8708': 'Auto Parts',
-};
+const BILATERAL_PRODUCTS = (
+  strategicProductMetadata.products as Array<Partial<BilateralProductMetadata>>
+).filter((product): product is BilateralProductMetadata => (
+  typeof product.bilateralHs4Code === 'string'
+  && product.bilateralHs4Code.length > 0
+  && typeof product.label === 'string'
+));
+const HS4_CODES = Array.from(new Set(BILATERAL_PRODUCTS.map(p => p.bilateralHs4Code)));
+const HS4_LABELS: Record<string, string> = Object.fromEntries(
+  BILATERAL_PRODUCTS.map(p => [p.bilateralHs4Code, p.bilateralLabel ?? p.label]),
+);
 
 // UN M49 mostly matches UN Comtrade reporterCodes, except the shared override
 // list. Using M49 codes for those reporters silently yields count:0.
