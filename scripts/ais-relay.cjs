@@ -6636,7 +6636,7 @@ function startPizzintSeedLoop() {
 // ─────────────────────────────────────────────────────────────
 const DODO_PRICE_SEED_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const DODO_PRICE_SEED_TTL = 43200; // 12h (2× interval)
-const DODO_PRICE_REDIS_KEY = 'product-catalog:v2';
+const DODO_PRICE_REDIS_KEY = 'product-catalog:v3';
 const DODO_LIVE_URL = 'https://live.dodopayments.com';
 const DODO_TEST_URL = 'https://test.dodopayments.com';
 const DODO_PRICE_API_KEY = process.env.DODO_API_KEY || '';

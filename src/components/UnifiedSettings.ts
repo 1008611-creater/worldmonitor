@@ -1499,8 +1499,11 @@ export class UnifiedSettings {
       return `<span class="mcp-clients-quota-loading">Loading quota...</span>`;
     }
     const reset = this.formatQuotaReset(q.resetsAt);
+    // `limit: null` = unlimited plan (Enterprise) — there is no denominator to
+    // show, so the counter reads "120 / unlimited".
+    const limitLabel = q.limit === null ? 'unlimited' : String(q.limit);
     return `<span class="mcp-clients-quota-label">MCP daily quota:</span>
-      <strong>${q.used} / ${q.limit}</strong>
+      <strong>${q.used} / ${limitLabel}</strong>
       <span class="mcp-clients-quota-reset">used today, resets ${escapeHtml(reset)}</span>`;
   }
 

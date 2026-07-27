@@ -25,7 +25,7 @@ export const PUBLIC_PRODUCT_FACTS = {
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": false,
       "selfServe": false,
-      "description": "Core dashboard panels, Global news feed, Earthquake & weather alerts, Basic map view"
+      "description": "Core dashboard panels, Global news feed, Earthquake & weather alerts, Basic map view, 3 dashboard tabs"
     },
     {
       "planKey": "pro_monthly",
@@ -39,7 +39,7 @@ export const PUBLIC_PRODUCT_FACTS = {
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "Everything in Free, AI stock analysis & backtesting, Daily market briefs, Military & geopolitical tracking, Custom widget builder, MCP + SDK access for Claude Desktop & other AI clients (50 calls/day), Priority data refresh"
+      "description": "Everything in Free, AI stock analysis & backtesting, Daily market briefs, Military & geopolitical tracking, Custom widget builder, 10 custom dashboards (vs 3), MCP + SDK access for Claude Desktop & other AI clients (50 calls/day), Priority data refresh, Personal license"
     },
     {
       "planKey": "pro_annual",
@@ -48,6 +48,34 @@ export const PUBLIC_PRODUCT_FACTS = {
       "billingPeriod": "annual",
       "billingDuration": "P1Y",
       "price": 399.99,
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://www.worldmonitor.app/pro#pricing",
+      "currentForCheckout": true,
+      "selfServe": true,
+      "description": ""
+    },
+    {
+      "planKey": "pro_business_monthly",
+      "name": "Pro Business Monthly",
+      "tierGroup": "pro_business",
+      "billingPeriod": "monthly",
+      "billingDuration": "P1M",
+      "price": 69.99,
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://www.worldmonitor.app/pro#pricing",
+      "currentForCheckout": true,
+      "selfServe": true,
+      "description": "Everything in Pro, Use for client work, internal tools & reporting, Data export — CSV, JSON & PDF reports, 25 custom dashboards (vs 10), MCP + SDK: 250 calls/day (vs 50), Priority support, Commercial license included"
+    },
+    {
+      "planKey": "pro_business_annual",
+      "name": "Pro Business Annual",
+      "tierGroup": "pro_business",
+      "billingPeriod": "annual",
+      "billingDuration": "P1Y",
+      "price": 699.99,
       "priceCurrency": "USD",
       "availability": "https://schema.org/InStock",
       "url": "https://www.worldmonitor.app/pro#pricing",
@@ -67,7 +95,7 @@ export const PUBLIC_PRODUCT_FACTS = {
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "REST API + official SDKs (npm, PyPI, RubyGems, Go), License / API key included, Real-time data streams, 60 requests/minute, 1,000 requests/day included, Webhook notifications, No commercial use"
+      "description": "REST API + official SDKs (npm, PyPI, RubyGems, Go), License / API key included, Real-time data streams, 60 requests/minute, 1,000 requests/day included, Webhook notifications, Commercial license — for your organization"
     },
     {
       "planKey": "api_starter_annual",
@@ -95,7 +123,7 @@ export const PUBLIC_PRODUCT_FACTS = {
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "Everything in API Starter, 300 requests/minute, 10,000 requests/day included, 5 Pro licenses included, Same company email required, Priority support, Commercial use applicable"
+      "description": "Everything in API Starter, Redistribution rights — embed our data in what you sell, 300 requests/minute, 10,000 requests/day included, 5 Pro licenses included, Priority support, Commercial license — for your customers"
     },
     {
       "planKey": "enterprise",
@@ -133,6 +161,16 @@ export const PRODUCT_CATALOG = {
     "tierGroup": "pro",
     "billingPeriod": "annual"
   },
+  "pdt_0NjyFDbhURh2oROgPIU3G": {
+    "planKey": "pro_business_monthly",
+    "tierGroup": "pro_business",
+    "billingPeriod": "monthly"
+  },
+  "pdt_0Nk072fxPUcHWivZRtlQW": {
+    "planKey": "pro_business_annual",
+    "tierGroup": "pro_business",
+    "billingPeriod": "annual"
+  },
   "pdt_0NbttVmG1SERrxhygbbUq": {
     "planKey": "api_starter",
     "tierGroup": "api_starter",
@@ -164,7 +202,8 @@ export const TIER_CONFIG = {
       "Core dashboard panels",
       "Global news feed",
       "Earthquake & weather alerts",
-      "Basic map view"
+      "Basic map view",
+      "3 dashboard tabs"
     ],
     "planLimits": {
       "apiRequestsPerDay": 0,
@@ -186,8 +225,12 @@ export const TIER_CONFIG = {
       "Daily market briefs",
       "Military & geopolitical tracking",
       "Custom widget builder",
+      "10 custom dashboards (vs 3)",
       "MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)",
       "Priority data refresh"
+    ],
+    "highlightFeatures": [
+      "Personal license"
     ],
     "planLimits": {
       "apiRequestsPerDay": 0,
@@ -197,10 +240,33 @@ export const TIER_CONFIG = {
     },
     "highlighted": true
   },
+  "pro_business": {
+    "name": "Pro Business",
+    "localeKey": "proBusiness",
+    "description": "The Pro dashboard, licensed for work",
+    "features": [
+      "Everything in Pro",
+      "Use for client work, internal tools & reporting",
+      "Data export — CSV, JSON & PDF reports",
+      "25 custom dashboards (vs 10)",
+      "MCP + SDK: 250 calls/day (vs 50)",
+      "Priority support"
+    ],
+    "highlightFeatures": [
+      "Commercial license included"
+    ],
+    "planLimits": {
+      "apiRequestsPerDay": 0,
+      "apiBurstRequestsPerMinute": 0,
+      "mcpCallsPerDay": 250,
+      "mcpBurstRequestsPerMinute": 60
+    },
+    "highlighted": false
+  },
   "api_starter": {
     "name": "API Starter",
     "localeKey": "api",
-    "description": "Programmatic access to intelligence data",
+    "description": "Build internal tools on live intelligence data",
     "features": [
       "REST API + official SDKs (npm, PyPI, RubyGems, Go)",
       "License / API key included",
@@ -210,7 +276,7 @@ export const TIER_CONFIG = {
       "Webhook notifications"
     ],
     "highlightFeatures": [
-      "No commercial use"
+      "Commercial license — for your organization"
     ],
     "planLimits": {
       "apiRequestsPerDay": 1000,
@@ -223,17 +289,17 @@ export const TIER_CONFIG = {
   "api_business": {
     "name": "API Business",
     "localeKey": "apiBusiness",
-    "description": "High-volume API for teams",
+    "description": "Launch your own product on WorldMonitor data",
     "features": [
       "Everything in API Starter",
+      "Redistribution rights — embed our data in what you sell",
       "300 requests/minute",
       "10,000 requests/day included",
       "5 Pro licenses included",
-      "Same company email required",
       "Priority support"
     ],
     "highlightFeatures": [
-      "Commercial use applicable"
+      "Commercial license — for your customers"
     ],
     "planLimits": {
       "apiRequestsPerDay": 10000,
@@ -270,6 +336,7 @@ export const TIER_CONFIG = {
 export const PUBLIC_TIER_GROUPS = [
   "free",
   "pro",
+  "pro_business",
   "api_starter",
   "api_business",
   "enterprise"
@@ -278,6 +345,8 @@ export const PUBLIC_TIER_GROUPS = [
 export const FALLBACK_PRICES = {
   "pdt_0Nbtt71uObulf7fGXhQup": 3999,
   "pdt_0NbttMIfjLWC10jHQWYgJ": 39999,
+  "pdt_0NjyFDbhURh2oROgPIU3G": 6999,
+  "pdt_0Nk072fxPUcHWivZRtlQW": 69999,
   "pdt_0NbttVmG1SERrxhygbbUq": 9999,
   "pdt_0Nbu2lawHYE3dv2THgSEV": 99900,
   "pdt_0Nbttg7NuOJrhbyBGCius": 29999

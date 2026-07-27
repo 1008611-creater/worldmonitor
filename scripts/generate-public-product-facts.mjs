@@ -112,6 +112,7 @@ const fallbackPrices = Object.fromEntries(
 const tierGroupForLocaleKey = {
   free: 'free',
   pro: 'pro',
+  proBusiness: 'pro_business',
   api: 'api_starter',
   apiBusiness: 'api_business',
   enterprise: 'enterprise',
@@ -372,24 +373,30 @@ function pricingSummary() {
         name: 'Free',
         price_usd_monthly: 0,
         signup_required: false,
-        features: [`${stats.layerDefinitions} map layers`, '500+ feeds', 'country briefs', 'chokepoints', 'instability scores', 'watchlists'],
+        features: [`${stats.layerDefinitions} map layers`, '500+ feeds', 'country briefs', 'chokepoints', 'instability scores', 'watchlists', '3 dashboard tabs'],
       },
       {
         name: 'Pro',
         price_usd_monthly: byKey.pro_monthly.price,
         price_usd_yearly: byKey.pro_annual.price,
-        features: ['WM Analyst', 'Scenario Engine', 'Route Explorer', 'AI digest', 'custom widget builder', 'MCP'],
+        features: ['WM Analyst', 'Scenario Engine', 'Route Explorer', 'AI digest', 'custom widget builder', 'MCP', '10 custom dashboards', 'personal license'],
+      },
+      {
+        name: 'Pro Business',
+        price_usd_monthly: byKey.pro_business_monthly.price,
+        price_usd_yearly: byKey.pro_business_annual.price,
+        features: ['Everything in Pro', 'commercial license', 'data export — CSV, JSON & PDF reports', '25 custom dashboards', '250 MCP calls/day', 'priority support'],
       },
       {
         name: 'API',
         price_usd_monthly: byKey.api_starter.price,
         price_usd_yearly: byKey.api_starter_annual.price,
-        features: ['REST API', 'license / API key included', '1,000 requests/day starter limit', 'webhooks', 'structured JSON', 'OpenAPI docs', 'personal use only — no commercial use'],
+        features: ['REST API', 'license / API key included', '1,000 requests/day starter limit', 'webhooks', 'structured JSON', 'OpenAPI docs', 'commercial license — for your organization'],
       },
       {
         name: 'API Business',
         price_usd_monthly: byKey.api_business.price,
-        features: ['Everything in API Starter', '300 requests/minute', '10,000 requests/day', '5 Pro licenses included', 'same company email required', 'commercial use applicable', 'priority support'],
+        features: ['Everything in API Starter', '300 requests/minute', '10,000 requests/day', '5 Pro licenses included', 'same company email required', 'commercial license — for your customers', 'priority support'],
       },
       {
         name: 'Enterprise',

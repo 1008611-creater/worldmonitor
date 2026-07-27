@@ -31,6 +31,8 @@ const { PRODUCT_CATALOG } = await import('../convex/config/productCatalog.ts');
 const KEY_MAP = {
   pro_monthly: 'PRO_MONTHLY',
   pro_annual: 'PRO_ANNUAL',
+  pro_business_monthly: 'PRO_BUSINESS_MONTHLY',
+  pro_business_annual: 'PRO_BUSINESS_ANNUAL',
   api_starter: 'API_STARTER_MONTHLY',
   api_starter_annual: 'API_STARTER_ANNUAL',
   api_business: 'API_BUSINESS',
@@ -180,6 +182,9 @@ function getTierDisplayName(tierGroup) {
   const names = {
     free: 'Free',
     pro: 'Pro',
+    // Exact string — pro-test checkout derives PRO_BUSINESS_PRODUCT_IDS from it
+    // and the dashboard export gate probes the served catalog for it.
+    pro_business: 'Pro Business',
     api_starter: 'API Starter',
     api_business: 'API Business',
     enterprise: 'Enterprise',
@@ -191,6 +196,7 @@ function getTierLocaleKey(tierGroup) {
   const keys = {
     free: 'free',
     pro: 'pro',
+    pro_business: 'proBusiness',
     api_starter: 'api',
     api_business: 'apiBusiness',
     enterprise: 'enterprise',
@@ -206,8 +212,9 @@ function getDescription(tierGroup) {
   const descriptions = {
     free: 'Get started with the essentials',
     pro: 'Full intelligence dashboard',
-    api_starter: 'Programmatic access to intelligence data',
-    api_business: 'High-volume API for teams',
+    pro_business: 'The Pro dashboard, licensed for work',
+    api_starter: 'Build internal tools on live intelligence data',
+    api_business: 'Launch your own product on WorldMonitor data',
     enterprise: 'Custom solutions for organizations',
   };
   return descriptions[tierGroup] || '';

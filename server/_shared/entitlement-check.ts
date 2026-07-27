@@ -57,6 +57,30 @@ export interface CachedEntitlements {
      * that reason (forcing a re-fetch would contradict fail-open).
      */
     apiDailyAllowance?: number;
+    /**
+     * Data-export entitlement (plan 2026-07-25-001) — the enforcement field
+     * for CSV/JSON/PDF export. Like `apiDailyAllowance` and unlike
+     * `mcpAccess`, consumers treat `undefined` on a `tier >= 2` row as
+     * **entitled (fail-OPEN)**, and deliberately NOT added to the
+     * cache-staleness gate below — which is exactly why that fail-open is
+     * permanent rather than a migration window.
+     */
+    dataExport?: boolean;
+    /**
+     * Catalog plan limits, mirrored verbatim from `PlanFeatures.planLimits`
+     * (convex/config/productCatalog.ts). Optional because legacy rows predate
+     * it and because the Convex read path only merges what the catalog holds.
+     * `null` on a member means **unlimited**; a MISSING member (or a missing
+     * `planLimits` altogether) means unknown, and consumers resolve unknown
+     * toward cost protection — never toward the higher allowance. The MCP
+     * daily quota (plan 2026-07-25-001 U3) is the first consumer.
+     */
+    planLimits?: {
+      apiRequestsPerDay?: number | null;
+      apiBurstRequestsPerMinute?: number | null;
+      mcpCallsPerDay?: number | null;
+      mcpBurstRequestsPerMinute?: number | null;
+    };
   };
   validUntil: number;
   billingStatus?: BillingVerificationStatus;

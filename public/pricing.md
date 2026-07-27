@@ -12,7 +12,7 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
 - Signup required: No
 - Best for: Public situational awareness, OSINT research, market/geopolitical context, news monitoring
 - Includes: 56 map layers, 500+ curated feeds, country briefs, hotspots, instability scores, chokepoints, cables, cascade analysis, breaking alert pipeline and watchlists
-- Limits: Free dashboard refresh cadence is typically 5-15 minutes; advanced analyst, digest, API and team workflows require paid plans
+- Limits: 3 dashboard tabs; free dashboard refresh cadence is typically 5-15 minutes; advanced analyst, digest, API and team workflows require paid plans
 
 ## Pro
 
@@ -21,8 +21,22 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
 - Annual savings: 2 months free versus monthly billing
 - Best for: Investors, analysts, researchers, traders and operators who need the decision layer on top of the free dashboard
 - Includes: WM Analyst chat across 30+ live services with citations, Scenario Engine, Route Explorer, personal AI digest, custom widget builder, MCP access and 42 tools under one key
+- License: Personal use
+- Limits: 10 custom dashboards, MCP + SDK 50 calls/day
 - Digest cadence: Daily, twice-daily or weekly
 - Delivery channels: Slack, Discord, Telegram, email and webhook
+
+## Pro Business
+
+- Price: $69.99/month
+- Annual price: $699.99/year
+- Annual savings: 2 months free versus monthly billing
+- Best for: Consultants, agencies and teams who use the Pro dashboard for client work, internal tools or reporting
+- Includes: Everything in Pro, plus data export (CSV, JSON and PDF reports)
+- License: Commercial license included — use WorldMonitor for client work, internal tools and reporting
+- Limits: 25 custom dashboards, MCP + SDK 250 calls/day
+- Support: Priority support
+- Note: Pro and Pro Business are separate products, not a self-serve plan change. To move up, cancel Pro in the billing portal and start the Pro Business checkout; your Pro access runs to the end of the term you already paid for.
 
 ## API Starter
 
@@ -31,7 +45,7 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
 - Annual savings: about 17 percent versus monthly billing
 - Best for: Developers and teams that want programmatic access to World Monitor intelligence data
 - Includes: REST API access, license / API key creation (the `wm_` key used by the desktop app and API), structured JSON, cache headers, OpenAPI docs, real-time data streams and webhook notifications
-- License: Personal use only — no commercial use
+- License: Commercial license for your organization — build internal tools and reporting on the data; redistributing it to your own customers requires API Business
 - Starter limit: 1,000 requests/day
 - Starter webhooks: 5 webhook rules
 
@@ -39,8 +53,8 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
 
 - Price: $299.99/month
 - Best for: Teams with high-volume programmatic workloads that outgrow the Starter quota
-- Includes: Everything in API Starter, 5 Pro licenses included and priority support
-- License: Commercial use applicable; the 5 bundled Pro seats all require the same company email domain
+- Includes: Everything in API Starter, redistribution rights, 5 Pro licenses included and priority support
+- License: Commercial license for your customers — embed WorldMonitor data in what you sell; the 5 bundled Pro seats all require the same company email domain
 - Limits: 300 requests/minute, 10,000 requests/day
 - Upgrading from Starter: manage the switch from the billing portal (prorated immediately); new customers can subscribe directly at https://worldmonitor.app/pro
 
@@ -79,7 +93,8 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
         "country briefs",
         "chokepoints",
         "instability scores",
-        "watchlists"
+        "watchlists",
+        "3 dashboard tabs"
       ]
     },
     {
@@ -92,7 +107,22 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
         "Route Explorer",
         "AI digest",
         "custom widget builder",
-        "MCP"
+        "MCP",
+        "10 custom dashboards",
+        "personal license"
+      ]
+    },
+    {
+      "name": "Pro Business",
+      "price_usd_monthly": 69.99,
+      "price_usd_yearly": 699.99,
+      "features": [
+        "Everything in Pro",
+        "commercial license",
+        "data export — CSV, JSON & PDF reports",
+        "25 custom dashboards",
+        "250 MCP calls/day",
+        "priority support"
       ]
     },
     {
@@ -106,7 +136,7 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
         "webhooks",
         "structured JSON",
         "OpenAPI docs",
-        "personal use only — no commercial use"
+        "commercial license — for your organization"
       ]
     },
     {
@@ -118,7 +148,7 @@ Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/pr
         "10,000 requests/day",
         "5 Pro licenses included",
         "same company email required",
-        "commercial use applicable",
+        "commercial license — for your customers",
         "priority support"
       ]
     },
