@@ -665,7 +665,9 @@
       "q9": "Είναι ανοιχτού κώδικα;",
       "a9": "Ναι — ανοιχτού κώδικα υπό AGPL-3.0 στο GitHub: διαβάστε τον κώδικα, host-αρετε τον μόνοι σας, ή δημιουργήστε πάνω του. Native desktop apps για Windows, macOS και Linux είναι διαθέσιμα επίσης, συν ένα Android TV app για wall displays.",
       "q10": "Γιατί το World Monitor δεν είναι Palantir;",
-      "a10": "Το Palantir καθιστά τα δικά της δεδομένα μιας ιδρύματος λειτουργικά εντός αυτού του ιδρύματος. Το World Monitor ξεκινά από το άλλο άκρο: συγκεντρώνει, κανονικοποιεί, συσχετίζει και παρακολουθεί δεδομένα του δημόσιου κόσμου, και στη συνέχεια δημοσιεύει αυτό το στρώμα πληροφοριών μέσω ενός δωρεάν πίνακα ελέγχου και κώδικα ανοικτής πηγής. Διαφορετική εργασία, διαφορετικό προϊόν."
+      "a10": "Το Palantir καθιστά τα δικά της δεδομένα μιας ιδρύματος λειτουργικά εντός αυτού του ιδρύματος. Το World Monitor ξεκινά από το άλλο άκρο: συγκεντρώνει, κανονικοποιεί, συσχετίζει και παρακολουθεί δεδομένα του δημόσιου κόσμου, και στη συνέχεια δημοσιεύει αυτό το στρώμα πληροφοριών μέσω ενός δωρεάν πίνακα ελέγχου και κώδικα ανοικτής πηγής. Διαφορετική εργασία, διαφορετικό προϊόν.",
+      "q11": "Which World Monitor license do I need?",
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
     },
     "cta": {
       "title": "Ο παγκόσμιος χάρτης δεν σας περιμένει.",

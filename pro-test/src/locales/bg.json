@@ -665,7 +665,9 @@
       "q9": "Той ли е с отворен код?",
       "a9": "Да — с отворен код под AGPL-3.0 на GitHub: прочетете кода, самостоятелно хост, или се надстройте. Нативните настолни приложения за Windows, macOS и Linux са налични също, плюс приложение Android TV за настенни дисплеи.",
       "q10": "Защо World Monitor не е Palantir?",
-      "a10": "Palantir прави данните на една институция оперативни в рамките на тази институция. World Monitor отива от другия край: събира, нормализира, корелира и мониторира публични данни от света, след което публикува този слой на интелигентност чрез безплатна табла и код с отворен код. Различна задача, различен продукт."
+      "a10": "Palantir прави данните на една институция оперативни в рамките на тази институция. World Monitor отива от другия край: събира, нормализира, корелира и мониторира публични данни от света, след което публикува този слой на интелигентност чрез безплатна табла и код с отворен код. Различна задача, различен продукт.",
+      "q11": "Which World Monitor license do I need?",
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
     },
     "cta": {
       "title": "Световната карта не чака вас.",

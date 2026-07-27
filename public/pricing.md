@@ -6,6 +6,16 @@ World Monitor has a free public dashboard and paid tiers for analyst workflows, 
 
 Live tier/price/product-ID data (JSON): `GET https://www.worldmonitor.app/api/product-catalog` — public, no key required. Send a descriptive `User-Agent` (for example `mytool/1.0 (+https://yoursite.example)`); default HTTP-library user agents may be challenged by the edge firewall.
 
+## License scope
+
+- **Pro — Personal license:** one named subscriber may use World Monitor for their own research, learning, investing and decisions. It does not cover employer, business or client use.
+- **Pro Business — Commercial license:** one named subscriber may use the dashboard, exports and included MCP / SDK allowance for company work, client analysis, reports, presentations and internal tools in that user's workflow. It does not cover a live customer-facing data product.
+- **API Starter — Commercial license for your organization:** the subscribing organization may use the API in private systems, dashboards, automations and internal tools. It does not permit customer redistribution.
+- **API Business — Commercial license for your customers:** the subscribing organization may display, embed or deliver API outputs as part of its own customer-facing product or service. It does not permit raw-data resale, shared API access or a standalone substitute for World Monitor.
+- **Enterprise — Custom agreement:** required for higher-volume redistribution, additional seats, white-labeling, standalone data feeds and custom deployments.
+
+These subscription licenses cover the hosted Service and its outputs. They are separate from the AGPL-3.0-only platform source-code license and the MIT licenses on the official thin clients. Full scope, examples and restrictions: https://worldmonitor.app/docs/terms#subscription-license-scope
+
 ## Free
 
 - Price: $0/month

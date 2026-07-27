@@ -665,7 +665,9 @@
       "q9": "เป็นโอเพนซอร์สหรือ",
       "a9": "ใช่ — โอเพนซอร์สภายใต้ AGPL-3.0 บน GitHub: อ่านโค้ด โฮสต์เอง หรือสร้างขึ้นจาก นอกจากนี้ยังมีแอปเดสก์ทอปแบบเนทิฟสำหรับ Windows, macOS และ Linux พร้อมแอป Android TV สำหรับการแสดงผลบนผนัง",
       "q10": "ทำไม World Monitor ถึงไม่ใช่ Palantir?",
-      "a10": "Palantir ทำให้ข้อมูลของสถาบันสามารถดำเนินการได้ภายในสถาบันนั้น World Monitor เริ่มต้นจากอีกด้านหนึ่ง: รวบรวม ทำให้เป็นมาตรฐาน สัมพันธ์กัน และติดตามข้อมูลสาธารณะทั่วโลก จากนั้นเผยแพร่ชั้นข้อมูลกำหนดการอัจฉริยะผ่านแdashboard ฟรีและโค้ดโอเพนซอร์ส งานต่างกัน ผลิตภัณฑ์ต่างกัน"
+      "a10": "Palantir ทำให้ข้อมูลของสถาบันสามารถดำเนินการได้ภายในสถาบันนั้น World Monitor เริ่มต้นจากอีกด้านหนึ่ง: รวบรวม ทำให้เป็นมาตรฐาน สัมพันธ์กัน และติดตามข้อมูลสาธารณะทั่วโลก จากนั้นเผยแพร่ชั้นข้อมูลกำหนดการอัจฉริยะผ่านแdashboard ฟรีและโค้ดโอเพนซอร์ส งานต่างกัน ผลิตภัณฑ์ต่างกัน",
+      "q11": "Which World Monitor license do I need?",
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
     },
     "cta": {
       "title": "แผนที่โลกไม่ได้รอคุณ",

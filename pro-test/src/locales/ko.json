@@ -665,7 +665,9 @@
       "q9": "오픈 소스인가요?",
       "a9": "네 — GitHub에서 AGPL-3.0 오픈 소스: 코드를 읽고, 자체 호스팅하거나, 이를 기반으로 빌드할 수 있습니다. Windows, macOS, Linux용 네이티브 데스크톱 앱도 제공되며, 벽면 디스플레이용 Android TV 앱도 있습니다.",
       "q10": "World Monitor가 Palantir가 아닌 이유는?",
-      "a10": "Palantir는 기관의 자체 데이터를 그 기관 내에서 운영 가능하게 만듭니다. World Monitor는 반대편에서 시작합니다. 공개 세계 데이터를 수집, 정규화, 상관관계 파악, 모니터링한 후 무료 대시보드와 오픈소스 코드를 통해 인텔리전스 계층을 발행합니다. 다른 역할, 다른 제품입니다."
+      "a10": "Palantir는 기관의 자체 데이터를 그 기관 내에서 운영 가능하게 만듭니다. World Monitor는 반대편에서 시작합니다. 공개 세계 데이터를 수집, 정규화, 상관관계 파악, 모니터링한 후 무료 대시보드와 오픈소스 코드를 통해 인텔리전스 계층을 발행합니다. 다른 역할, 다른 제품입니다.",
+      "q11": "Which World Monitor license do I need?",
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
     },
     "cta": {
       "title": "세계 지도는 당신을 기다리지 않습니다.",
