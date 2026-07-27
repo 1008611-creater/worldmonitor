@@ -31,10 +31,24 @@ const LOCK_TTL_MS = 30 * 60 * 1000; // 30 min
 // Freshness gate: skip the run if seed-meta says we re-seeded recently.
 // Mirrors _bundle-runner.mjs:240's `elapsed < intervalMs * 0.8` pattern so
 // the gate lives in code regardless of the Railway cron cadence or any
-// future Watch-Paths filter changes. Set to 24d (0.8 × 30d) to match the
-// new monthly Railway cron with one tick of slack against missed runs.
-// Belt-and-suspenders against the UN Comtrade Free APIs 500 calls/month
-// quota (~396 calls per run with a single COMTRADE_API_KEYS entry).
+// future Watch-Paths filter changes.
+//
+// VERIFIED 2026-07-27 against the Railway API: the `seed-comtrade-bilateral-hs4`
+// service's cronSchedule is `0 6 1 * *` — 06:00 on the 1st, monthly. So the
+// real gap between ticks is 28-31 days and this 24d gate always clears before
+// the next scheduled run; it never blocks one. Re-check this if the schedule
+// is ever edited, because every constant here is sized against it:
+//   gate 24d < shortest month 28d      -> a scheduled run is never skipped
+//   maxStaleMin 35d > longest month 31d -> no false STALE_SEED between runs
+//   ~394 calls x 1 run/month           -> fits the 500/month quota
+//
+// Belt-and-suspenders against the UN Comtrade Free APIs 500 calls/month quota
+// (~394 calls per run with a single COMTRADE_API_KEYS entry). Also verified
+// 2026-07-27: this is the ONLY scheduled consumer of that keyed quota.
+// seed-trade-flows runs daily but on the unauthenticated
+// `public/v1` preview route, and seed-recovery-import-hhi /
+// seed-recovery-reexport-share do use the keyed `data/v1/get` route but have
+// no Railway service running them.
 // Override for force-reseed scenarios: FORCE_RESEED=true bypasses the gate.
 export const FRESHNESS_GATE_MS = 24 * 24 * 60 * 60 * 1000;
 
