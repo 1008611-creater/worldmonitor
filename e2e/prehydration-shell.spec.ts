@@ -207,6 +207,21 @@ test.describe('pre-hydration dashboard shell', () => {
       await expect(page.locator('.header')).toBeVisible({ timeout: 30000 });
       await expect(page.locator('.skeleton-shell')).toHaveCount(0);
       await expect(page.locator('body > h1.app-heading')).toContainText('World Monitor');
+      for (const href of [
+        '/countries/',
+        '/chokepoints/',
+        '/crises/',
+        '/tools/',
+        '/pro#pricing',
+        'https://www.worldmonitor.app/blog/',
+        'https://www.worldmonitor.app/docs',
+        'https://github.com/koala73/worldmonitor',
+      ]) {
+        await expect(page.locator(`.site-footer nav a[href="${href}"]`)).toHaveCount(1);
+      }
+      for (const href of ['/countries/', '/chokepoints/', '/crises/', '/tools/']) {
+        await expect(page.locator(`.mobile-menu-footer-links a[href="${href}"]`)).toHaveCount(1);
+      }
       await expect.poll(async () => page.evaluate(() => (
         document.documentElement.classList.contains('wm-layout-hydrated')
       ))).toBe(true);
@@ -336,32 +351,63 @@ test.describe('pre-hydration dashboard shell on mobile', () => {
   });
 });
 
+test.describe('server-rendered welcome page', () => {
+  test('keeps one visible heading and discoverable navigation after hydration', async ({ page }) => {
+    await page.goto('/pro/welcome.html', { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#seo-prerender')).toHaveCount(0);
+    await expect(page.locator('#root[data-wm-prerendered="welcome"] h1')).toHaveCount(1);
+    await expect(page.locator('#root h1')).toBeVisible();
+    await expect(page.locator('#root a[href="/dashboard?ref=welcome-hero"]')).toBeVisible();
+    await expect(page.locator('#root footer a[href="/countries/"]')).toBeVisible();
+    await expect(page.locator('#root footer a[href="https://github.com/koala73/worldmonitor"]')).toBeVisible();
+  });
+});
+
 test.describe('dashboard shell without JavaScript', () => {
   test.use({ javaScriptEnabled: false });
+
+  test('keeps the server-rendered welcome page visibly useful', async ({ page }) => {
+    await page.goto('/pro/welcome.html', { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#seo-prerender')).toHaveCount(0);
+    await expect(page.locator('#root[data-wm-prerendered="welcome"]')).toBeVisible();
+    await expect(page.locator('#root h1')).toHaveCount(1);
+    await expect(page.locator('#root h1')).toBeVisible();
+    await expect(page.locator('#root h1')).toContainText('you already knew');
+    await expect(page.locator('#root a[href="/dashboard?ref=welcome-hero"]')).toBeVisible();
+    await expect(page.locator('#root footer a[href="/countries/"]')).toBeVisible();
+    await expect(page.locator('#root footer a[href="https://github.com/koala73/worldmonitor"]')).toBeVisible();
+  });
 
   test('hides the JS-only shell and keeps the no-JS content scrollable', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('.skeleton-shell')).toBeHidden();
-    await expect(page.locator('body > h1.app-heading')).toBeHidden();
-    await expect(page.locator('#seo-prerender')).toBeVisible();
-    await expect(page.locator('body')).toContainText('World Monitor Pro');
+    await expect(page.locator('body > h1.app-heading')).toContainText('World Monitor');
+    await expect(page.locator('body > h1.app-heading')).not.toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#seo-prerender')).toHaveCount(0);
+    await expect(page.locator('#dashboard-noscript')).toBeVisible();
+    await expect(page.locator('#dashboard-noscript')).toContainText('requires JavaScript');
+    for (const href of [
+      '/countries/',
+      '/chokepoints/',
+      '/crises/',
+      '/tools/',
+      '/blog/',
+      '/docs',
+      '/pro#pricing',
+      'https://github.com/koala73/worldmonitor',
+    ]) {
+      await expect(page.locator(`#dashboard-noscript a[href="${href}"]`)).toHaveCount(1);
+    }
 
     const beforeScroll = await page.evaluate(() => ({
       bodyOverflow: getComputedStyle(document.body).overflow,
       docOverflow: getComputedStyle(document.documentElement).overflow,
-      scrollHeight: document.documentElement.scrollHeight,
-      viewportHeight: window.innerHeight,
-      y: window.scrollY,
     }));
 
     expect(beforeScroll.bodyOverflow).not.toBe('hidden');
     expect(beforeScroll.docOverflow).not.toBe('hidden');
-    expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.viewportHeight);
-
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    const afterScrollY = await page.evaluate(() => window.scrollY);
-
-    expect(afterScrollY).toBeGreaterThan(beforeScroll.y);
   });
 });

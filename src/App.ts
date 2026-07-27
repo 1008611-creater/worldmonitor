@@ -1275,8 +1275,8 @@ export class App {
     markLcpDebug('wm:boot:i18n-ready');
     initDeferredDashboardFonts();
     // Localize the static index.html shell — <title>, meta description, and
-    // sr-only <h1> are baked in English so search crawlers see something
-    // before JS runs; once i18n is ready we swap them to the user's locale.
+    // the accessible <h1> are baked in English before the app boots; once i18n
+    // is ready we swap them to the user's locale.
     document.title = t('shell.documentTitle');
     const setMeta = (sel: string, val: string) => {
       const el = document.querySelector(sel);
