@@ -21,7 +21,7 @@
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": false,
       "selfServe": false,
-      "description": "Core dashboard panels, Global news feed, Earthquake & weather alerts, Basic map view"
+      "description": "Core dashboard panels, Global news feed, Earthquake & weather alerts, Basic map view, 3 dashboard tabs"
     },
     {
       "planKey": "pro_monthly",
@@ -35,7 +35,7 @@
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "Everything in Free, AI stock analysis & backtesting, Daily market briefs, Military & geopolitical tracking, Custom widget builder, MCP + SDK access for Claude Desktop & other AI clients (50 calls/day), Priority data refresh"
+      "description": "Everything in Free, AI stock analysis & backtesting, Daily market briefs, Military & geopolitical tracking, Custom widget builder, 10 custom dashboards (vs 3), MCP + SDK access for Claude Desktop & other AI clients (50 calls/day), Priority data refresh, Personal license"
     },
     {
       "planKey": "pro_annual",
@@ -44,6 +44,34 @@
       "billingPeriod": "annual",
       "billingDuration": "P1Y",
       "price": 399.99,
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://www.worldmonitor.app/pro#pricing",
+      "currentForCheckout": true,
+      "selfServe": true,
+      "description": ""
+    },
+    {
+      "planKey": "pro_business_monthly",
+      "name": "Pro Business Monthly",
+      "tierGroup": "pro_business",
+      "billingPeriod": "monthly",
+      "billingDuration": "P1M",
+      "price": 69.99,
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://www.worldmonitor.app/pro#pricing",
+      "currentForCheckout": true,
+      "selfServe": true,
+      "description": "Everything in Pro, Use for client work, internal tools & reporting, Data export — CSV, JSON & PDF reports, 25 custom dashboards (vs 10), MCP + SDK: 250 calls/day (vs 50), Priority support, Commercial license included"
+    },
+    {
+      "planKey": "pro_business_annual",
+      "name": "Pro Business Annual",
+      "tierGroup": "pro_business",
+      "billingPeriod": "annual",
+      "billingDuration": "P1Y",
+      "price": 699.99,
       "priceCurrency": "USD",
       "availability": "https://schema.org/InStock",
       "url": "https://www.worldmonitor.app/pro#pricing",
@@ -63,7 +91,7 @@
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "REST API + official SDKs (npm, PyPI, RubyGems, Go), License / API key included, Real-time data streams, 60 requests/minute, 1,000 requests/day included, Webhook notifications, No commercial use"
+      "description": "REST API + official SDKs (npm, PyPI, RubyGems, Go), License / API key included, Real-time data streams, 60 requests/minute, 1,000 requests/day included, Webhook notifications, Commercial license — for your organization"
     },
     {
       "planKey": "api_starter_annual",
@@ -91,7 +119,7 @@
       "url": "https://www.worldmonitor.app/pro#pricing",
       "currentForCheckout": true,
       "selfServe": true,
-      "description": "Everything in API Starter, 300 requests/minute, 10,000 requests/day included, 5 Pro licenses included, Same company email required, Priority support, Commercial use applicable"
+      "description": "Everything in API Starter, Redistribution rights — embed our data in what you sell, 300 requests/minute, 10,000 requests/day included, 5 Pro licenses included, Priority support, Commercial license — for your customers"
     },
     {
       "planKey": "enterprise",

@@ -36,7 +36,7 @@ const PRODUCT_ID_EXCLUDE_PATTERNS = [
   'e2e/',
   // Zero-import leaf: statically imported by the eager dashboard code, so it
   // cannot import the catalog without breaking the eager-chunk budget. It
-  // mirrors the two Pro ids as literals; its drift-guard test asserts them
+  // mirrors the Pro-family ids as literals; its drift-guard test asserts them
   // against the generated catalog, giving the same catalog-sync this guard wants.
   'src/services/pro-activation-state',
   'scripts/generate-product-config',
@@ -200,8 +200,8 @@ describe('Product catalog freshness', () => {
       }
     }
 
-    const groupToName = { free: 'Free', pro: 'Pro', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
-    const groupToLocaleKey = { free: 'free', pro: 'pro', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
+    const groupToName = { free: 'Free', pro: 'Pro', pro_business: 'Pro Business', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
+    const groupToLocaleKey = { free: 'free', pro: 'pro', pro_business: 'proBusiness', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
     const tiersByLocaleKey = new Map(tiersJson.map((tier) => [tier.localeKey, tier]));
 
     for (const group of visibleGroups) {
@@ -272,7 +272,7 @@ describe('Product catalog freshness', () => {
     assert.ok(generatedCatalog.tierConfig.pro.features.includes(expectedFeature));
     assert.deepEqual(
       generatedCatalog.publicTierGroups,
-      ['free', 'pro', 'api_starter', 'api_business', 'enterprise'],
+      ['free', 'pro', 'pro_business', 'api_starter', 'api_business', 'enterprise'],
     );
 
     const edgeSrc = readFileSync(join(ROOT, 'api/product-catalog.js'), 'utf8');
@@ -281,6 +281,64 @@ describe('Product catalog freshness', () => {
     assert.match(relaySrc, /requireShared\('product-catalog\.generated\.json'\)/);
     assert.doesNotMatch(edgeSrc, /MANUAL MIRROR/);
     assert.doesNotMatch(relaySrc, /MANUAL MIRROR/);
+  });
+
+  // The license chips are the whole point of the Pro Business release, and
+  // they travel in `highlightFeatures` — a field the generator does NOT sync
+  // into the locales. So a chip could say "No commercial use" on the live
+  // /pro page while the catalog sells a commercial license, with every other
+  // gate green.
+  it('license chips (highlightFeatures) match across the generated bundle, edge module, tiers.json, and en.json', () => {
+    // The generated JSON bundle is what BOTH consumers (Railway seeder via
+    // requireShared, edge endpoint via _product-catalog.generated.js) serve
+    // from, so it is the single mirror to check. en.json stays hand-edited —
+    // the generator does not sync highlightFeatures into the locales, which
+    // is exactly the drift this test exists to catch.
+    const bundle = JSON.parse(
+      readFileSync(join(ROOT, 'shared/product-catalog.generated.json'), 'utf8'),
+    );
+    const bundleHighlights = {};
+    for (const [group, config] of Object.entries(bundle.tierConfig)) {
+      if (Array.isArray(config.highlightFeatures)) bundleHighlights[group] = config.highlightFeatures;
+    }
+    assert.ok(Object.keys(bundleHighlights).length >= 4,
+      'generated bundle: expected >=4 tier highlightFeature lists');
+
+    // The edge module is a second emitted artifact of the same generator run;
+    // a partial regen could leave it stale, so pin each chip string into it.
+    const edgeGenerated = readFileSync(join(ROOT, 'api/_product-catalog.generated.js'), 'utf8');
+
+    const groupToLocaleKey = { free: 'free', pro: 'pro', pro_business: 'proBusiness', api_starter: 'api', api_business: 'apiBusiness', enterprise: 'enterprise' };
+    const tiersByLocaleKey = new Map(tiersJson.map((tier) => [tier.localeKey, tier]));
+    const enLocale = JSON.parse(readFileSync(join(proLocalesDir, 'en.json'), 'utf8'));
+
+    for (const [group, highlights] of Object.entries(bundleHighlights)) {
+      const localeKey = groupToLocaleKey[group];
+      assert.ok(localeKey, 'bundle tier group ' + group + ' has no localeKey mapping in this test');
+      assert.deepEqual(highlights, tiersByLocaleKey.get(localeKey)?.highlightFeatures,
+        'license chips for ' + group + ' drifted between the generated bundle and tiers.json (catalog highlightFeatures)');
+      assert.deepEqual(enLocale.pricing.tiers[localeKey]?.highlightFeatures, highlights,
+        'en.json pricing.tiers.' + localeKey + '.highlightFeatures is stale — the generator does not sync this field, edit it by hand');
+      for (const chip of highlights) {
+        assert.ok(edgeGenerated.includes(JSON.stringify(chip).slice(1, -1)),
+          'api/_product-catalog.generated.js is missing chip "' + chip + '" for ' + group + ' — partial regen?');
+      }
+    }
+  });
+
+  // Pro Business is only sellable if the generated tier carries BOTH product
+  // ids: pro-test/src/services/checkout.ts derives PRO_BUSINESS_PRODUCT_IDS
+  // from tiers where `name === 'Pro Business'`, and an empty set silently
+  // disables the guided cancel-then-rebuy 409 copy for Pro subscribers.
+  it('generated Pro Business tier carries both checkout product ids', () => {
+    const proBusiness = tiersJson.find((tier) => tier.name === 'Pro Business');
+    assert.ok(proBusiness, "tiers.json is missing the 'Pro Business' tier");
+    assert.equal(proBusiness.localeKey, 'proBusiness');
+    assert.ok(proBusiness.monthlyProductId, 'Pro Business should have monthlyProductId');
+    assert.ok(proBusiness.annualProductId, 'Pro Business should have annualProductId');
+    assert.equal(typeof proBusiness.monthlyPrice, 'number', 'Pro Business should have monthlyPrice');
+    assert.equal(typeof proBusiness.annualPrice, 'number', 'Pro Business should have annualPrice');
+    assert.equal(proBusiness.planLimits?.mcpCallsPerDay, 250, 'Pro Business MCP daily limit should be visible');
   });
 
   it('generated files and pro locale placeholders are fresh (re-running generator produces same output)', () => {
@@ -358,7 +416,7 @@ describe('Product catalog freshness', () => {
 
     // Each visible group should have a corresponding tier in the JSON
     // Map group names to expected display names
-    const groupToName = { free: 'Free', pro: 'Pro', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
+    const groupToName = { free: 'Free', pro: 'Pro', pro_business: 'Pro Business', api_starter: 'API Starter', api_business: 'API Business', enterprise: 'Enterprise' };
     for (const group of visibleGroups) {
       const expectedName = groupToName[group] || group;
       assert.ok(

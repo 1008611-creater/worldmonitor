@@ -585,7 +585,23 @@ entries.
 >
 > **Cadence below is inferred from each seed's cache TTL** as a documentation
 > aid; confirm the live cron schedule and Service ID against the Railway
-> dashboard before relying on it.
+> dashboard before relying on it. Rows showing a **bold cron expression with a
+> verified date** were read from the Railway API rather than inferred.
+>
+> To verify one yourself (reads `cronSchedule` for every service in the
+> project; the CLI stores the token at `~/.railway/config.json`):
+
+```bash
+railway whoami   # confirm you are logged in, then query the API:
+node -e "const c=require(require('os').homedir()+'/.railway/config.json');
+fetch('https://backboard.railway.com/graphql/v2',{method:'POST',
+ headers:{'Content-Type':'application/json',Authorization:'Bearer '+(c.user.token||c.user.accessToken)},
+ body:JSON.stringify({query:'query(\$id:String!){project(id:\$id){services{edges{node{name serviceInstances{edges{node{cronSchedule}}}}}}}}',
+ variables:{id:'29419572-0b0d-437f-8e71-4fa68daf514f'}})})
+ .then(r=>r.json()).then(d=>d.data.project.services.edges.forEach(e=>{
+   const cs=e.node.serviceInstances.edges.map(x=>x.node.cronSchedule).filter(Boolean);
+   if(cs.length)console.log(e.node.name.padEnd(40),cs.join(','));}))"
+```
 
 | Service | Start command | Inferred cadence | Domain |
 |---|---|---|---|
@@ -596,7 +612,7 @@ entries.
 | seed-market-breadth | `node scripts/seed-market-breadth.mjs` | daily (30d history window) | S&P 500 breadth (% above 20/50/200-day, Barchart) |
 | seed-weather-alerts | `node scripts/seed-weather-alerts.mjs` | ~15 min (15m TTL) | NWS active weather alerts |
 | seed-fx-yoy | `node scripts/seed-fx-yoy.mjs` | daily (25h TTL) | Wide-coverage FX YoY + 24m drawdown (resilience FX-stress inputs) |
-| seed-comtrade-bilateral-hs4 | `node scripts/seed-comtrade-bilateral-hs4.mjs` | periodic (72h TTL) | UN Comtrade bilateral HS4 trade flows |
+| seed-comtrade-bilateral-hs4 | `node scripts/seed-comtrade-bilateral-hs4.mjs` | **`0 6 1 * *` (monthly, verified 2026-07-27)** | UN Comtrade bilateral HS4 trade flows — only scheduled consumer of the keyed 500/mo Comtrade quota |
 | seed-hs2-chokepoint-exposure | `node scripts/seed-hs2-chokepoint-exposure.mjs` | periodic (TTL-extended) | HS2 chokepoint trade-exposure (derived) |
 | seed-service-statuses | `node scripts/seed-service-statuses.mjs` | frequent (relay-fallback) | Service-status warm-ping; primary seeder is the AIS relay loop |
 
