@@ -2264,6 +2264,7 @@
           "summaryVerified": "Débloquée et prête quand vous le serez.",
           "channelsNote": "Vous préférez Telegram, Slack, Discord ou un webhook ?",
           "pointers": {
+            "search": "Rechercher dans tout le tableau de bord",
             "widgets": "Créer un widget personnalisé",
             "analyst": "Interroger l'analyste IA",
             "mcpClients": "Configurer MCP",

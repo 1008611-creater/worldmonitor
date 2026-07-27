@@ -1995,6 +1995,7 @@
           "summaryVerified": "Upplåst och redo när du är det.",
           "channelsNote": "Föredrar du Telegram, Slack, Discord eller en webhook?",
           "pointers": {
+            "search": "Sök i hela instrumentpanelen",
             "widgets": "Skapa en anpassad widget",
             "analyst": "Fråga AI-analytikern",
             "mcpClients": "Konfigurera MCP",

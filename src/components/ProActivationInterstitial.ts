@@ -666,6 +666,18 @@ export function openProActivationInterstitial(options: ProActivationInterstitial
 
   const onKeydown = (e: KeyboardEvent): void => {
     if (!overlay) return;
+    // The power step teaches Command Search inside a full-screen modal. Handle
+    // the shortcut at capture time so it activates the visible pointer instead
+    // of opening the search overlay underneath this higher-z-index interstitial.
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
+      const searchPointer = modal.querySelector<HTMLButtonElement>('[data-pointer="search"]');
+      if (searchPointer) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchPointer.click();
+        return;
+      }
+    }
     if (e.key === 'Escape') {
       e.stopPropagation();
       handleDismiss();
@@ -820,6 +832,8 @@ export interface ProActivationFlowOptions {
   openAiAnalyst?: () => void;
   /** Open the custom-widget builder. Boot hook: dispatch `wm:open-widget-creator` on `ctx.container`. */
   openWidgetBuilder?: () => void;
+  /** Open the global command search. Boot hook: `App.openSearch()`. */
+  openSearch?: () => void;
   /** Open notification settings for multi-step channels (R8). Boot hook: `ctx.unifiedSettings.open('notifications')`. */
   openChannelSettings?: () => void;
   /**
@@ -1150,24 +1164,56 @@ function buildBriefExtra(syncBrief: string | null, hourRef: DigestHourRef): ProA
   };
 }
 
-/** Power-step extras: deep-link pointers into the Pro surfaces (R8-aware). */
+function commandSearchShortcut(): { keys: readonly string[]; label: string } {
+  const isApplePlatform =
+    typeof navigator !== 'undefined' &&
+    /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  return isApplePlatform
+    ? { keys: ['⌘', 'K'], label: '⌘K' }
+    : { keys: ['Ctrl', 'K'], label: 'Ctrl+K' };
+}
+
+/** Power-step extras: command search + deep-link pointers into the Pro surfaces (R8-aware). */
 function buildPowerExtra(options: ProActivationFlowOptions): ProActivationStepExtra {
-  const pointers: Array<{ id: string; label: string; open: () => void }> = [];
-  const add = (id: string, key: string, defaultValue: string, open?: () => void): void => {
+  const pointers: Array<{
+    id: string;
+    label: string;
+    open: () => void;
+    shortcut?: { keys: readonly string[]; label: string };
+  }> = [];
+  const add = (
+    id: string,
+    key: string,
+    defaultValue: string,
+    open?: () => void,
+    shortcut?: { keys: readonly string[]; label: string },
+  ): void => {
     if (typeof open !== 'function') return;
-    pointers.push({ id, label: t(key, { defaultValue }), open });
+    pointers.push({ id, label: t(key, { defaultValue }), open, shortcut });
   };
+  add(
+    'search',
+    'components.proActivation.steps.power.pointers.search',
+    'Search the entire dashboard',
+    options.openSearch,
+    commandSearchShortcut(),
+  );
   add('widgets', 'components.proActivation.steps.power.pointers.widgets', 'Build a custom widget', options.openWidgetBuilder);
   add('analyst', 'components.proActivation.steps.power.pointers.analyst', 'Ask the AI analyst', options.openAiAnalyst);
   add('mcpClients', 'components.proActivation.steps.power.pointers.mcpClients', 'Set up MCP', options.openMcpClients);
 
   const pointerButtons = pointers
-    .map(
-      (p) =>
-        `<button type="button" class="pro-activation-pointer" data-pointer="${p.id}">${escapeHtml(
-          p.label,
-        )}<span class="pro-activation-pointer-arrow" aria-hidden="true">→</span></button>`,
-    )
+    .map((p) => {
+      const trailing = p.shortcut
+        ? `<span class="pro-activation-pointer-shortcut" aria-hidden="true">${p.shortcut.keys
+            .map((key) => `<kbd>${escapeHtml(key)}</kbd>`)
+            .join('')}</span>`
+        : '<span class="pro-activation-pointer-arrow" aria-hidden="true">→</span>';
+      const ariaLabel = p.shortcut ? `${p.label} (${p.shortcut.label})` : p.label;
+      return `<button type="button" class="pro-activation-pointer" data-pointer="${p.id}" aria-label="${escapeHtml(
+        ariaLabel,
+      )}"><span class="pro-activation-pointer-label">${escapeHtml(p.label)}</span>${trailing}</button>`;
+    })
     .join('');
 
   // R8: multi-step channels are never embedded — link out to settings instead.

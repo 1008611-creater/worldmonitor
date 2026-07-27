@@ -2264,6 +2264,7 @@
           "summaryVerified": "Deblocată și pregătită oricând ești și tu.",
           "channelsNote": "Preferi Telegram, Slack, Discord sau un webhook?",
           "pointers": {
+            "search": "Caută în întregul tablou de bord",
             "widgets": "Creează un widget personalizat",
             "analyst": "Întreabă analistul AI",
             "mcpClients": "Configurează MCP",

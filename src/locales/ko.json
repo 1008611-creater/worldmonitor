@@ -2255,6 +2255,7 @@
           "summaryVerified": "잠금 해제됨 — 준비되면 언제든지 사용하세요.",
           "channelsNote": "Telegram, Slack, Discord 또는 웹훅을 선호하시나요?",
           "pointers": {
+            "search": "대시보드 전체 검색",
             "widgets": "맞춤 위젯 만들기",
             "analyst": "AI 분석가에게 질문하기",
             "mcpClients": "MCP 설정하기",

@@ -2255,6 +2255,7 @@
           "summaryVerified": "Freigeschaltet und einsatzbereit, wenn Sie es sind.",
           "channelsNote": "Lieber Telegram, Slack, Discord oder ein Webhook?",
           "pointers": {
+            "search": "Das gesamte Dashboard durchsuchen",
             "widgets": "Ein individuelles Widget erstellen",
             "analyst": "Den KI-Analysten fragen",
             "mcpClients": "MCP einrichten",

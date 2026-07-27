@@ -2255,6 +2255,7 @@
           "summaryVerified": "Ξεκλειδωμένο και έτοιμο όποτε είστε κι εσείς.",
           "channelsNote": "Προτιμάτε Telegram, Slack, Discord ή ένα webhook;",
           "pointers": {
+            "search": "Αναζήτηση σε ολόκληρο τον πίνακα",
             "widgets": "Δημιουργία προσαρμοσμένου widget",
             "analyst": "Ρωτήστε τον αναλυτή AI",
             "mcpClients": "Ρύθμιση MCP",
