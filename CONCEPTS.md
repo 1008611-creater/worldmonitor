@@ -106,6 +106,22 @@ The MCP transport this server implements over HTTP: JSON-RPC 2.0 requests via `P
 
 One of the product-variant subdomains (`tech`, `finance`, `commodity`, `happy`, `energy`) that serves a themed dashboard entry and metadata. The middleware and Vercel config recognize these hosts explicitly; canonical discovery URLs for shared surfaces (such as `/mcp`) redirect retrieval-method requests from variant hosts to the apex host so discovery signals do not fragment.
 
+## Anonymous Access
+
+### Anonymous Session
+
+The short-lived, server-signed identity that authorizes a key-less browser to read our public API surface, held in an HttpOnly cookie the client cannot inspect — it can only track the expiry and ask for a new one. It is not a user identity: it is freely mintable by anyone, is not bound to an account, and is deliberately refused by tier-gated routes, so a valid anonymous session and an authorized one are different questions. Clerk bearer tokens and user API keys take precedence wherever both are present.
+
+Because the cookie is opaque to JavaScript, the client can only infer its health from responses, and that inference is the fragile part. A rejection observed on one route is evidence about *that route*, not about the session — the two are distinguishable only by whether independent routes fail the same way. See also: Session Blackout, Entitlement.
+
+### Session Blackout
+
+The client-side cooldown during which every anonymous API call is answered locally with a synthetic unavailable response instead of reaching the network, entered when the anonymous session is judged unrecoverable and lifted automatically when the cooldown lapses. Its purpose is to stop a dead session from amplifying into a request-mint-retry storm across every panel.
+
+The blackout is deliberately blunt — it suppresses the whole surface — so what justifies entering it matters more than what it does. Only session-wide evidence qualifies: a failure to mint at all, or the same failure corroborated across distinct routes *within seconds of each other*. A single route's denial, even one that survives a fresh mint, is route-scoped evidence and earns at most route-scoped suppression; generalizing it blanks a dashboard whose session was never broken.
+
+Two properties make that corroboration mean what it says. It is time-bounded, because the evidence being generalized from is temporal coincidence — denials minutes apart are two endpoint problems, not one session problem. And it is retracted by success: a single credentialed 200 proves the browser is delivering the cookie, which settles the question the blackout was about. Suppression and evidence therefore expire on different clocks, and a sibling's success must retract the evidence without releasing the failing route's own suppression — that suppression is what stops a known-bad endpoint from re-minting on every poll. See also: Anonymous Session.
+
 ## Billing & Entitlements
 
 ### Entitlement

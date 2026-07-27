@@ -17,6 +17,7 @@ import { PREMIUM_RPC_PATHS } from '@/shared/premium-paths';
 import { hasPremiumIntent } from './premium-intent';
 import { isPublicSharedRpcRequest } from '@/shared/public-rpc-cache';
 import { enqueueSentryCall } from '@/bootstrap/sentry-defer';
+import { bootstrapTierKeyNames } from '../../shared/bootstrap-tier-keys.js';
 
 const STORAGE_KEY = 'wm-session-exp';
 // Refresh well before expiry so a half-loaded page doesn't fail mid-flight.
@@ -32,6 +33,34 @@ const PERIODIC_REFRESH_MS = 30 * 60 * 1000;
 // cookie (for example, strict cookie settings). Avoid amplifying that into a
 // request + mint + retry loop for every panel refresh.
 const SESSION_DEAD_COOLDOWN_MS = 15 * 60 * 1000;
+// A single endpoint that still 401s after a fresh mint proves nothing about
+// the session cookie (#5674). Server telemetry for the regrown WORLDMONITOR-WG
+// episodes showed 11 of 12 sampled affected browsers emitting ZERO server-side
+// 401s across the whole episode — sibling routes on the same tab returned 200
+// in the very same second the client declared the session dead. Treating one
+// route's denial as proof of a dead cookie is what turns a single endpoint
+// problem into a 15-minute blackout of every anonymous panel.
+//
+// Require corroboration from this many DISTINCT routes before suppressing all
+// anonymous traffic. The failure mode #5219/#5251 originally targeted — the
+// browser cannot deliver the HttpOnly cookie at all — makes EVERY route 401,
+// so it still reaches the quorum and still engages the global cooldown.
+const SESSION_DEAD_ROUTE_QUORUM = 2;
+// How close together those distinct denials must fall to count as ONE
+// session-wide failure. This is deliberately NOT SESSION_DEAD_COOLDOWN_MS: the
+// evidence that justifies a blackout is temporal coincidence (the sampled
+// episodes showed siblings returning 200 in the very same second), so a horizon
+// three orders of magnitude wider would let two unrelated endpoint bugs 14
+// minutes apart black out a demonstrably healthy session — the exact harm this
+// mechanism exists to remove. The per-route suppression window below stays at
+// SESSION_DEAD_COOLDOWN_MS; only the corroboration arithmetic uses this.
+const SESSION_DEAD_CORROBORATION_MS = 60 * 1000;
+// How long one route stays suppressed after rejecting a fresh cookie. Equal to
+// the global cooldown today, but named separately because it answers a different
+// question ("how long to stop paying mints for this endpoint" vs "how long to
+// blank the whole surface") — tuning one must not silently retune the other.
+const SESSION_DEAD_ROUTE_STRIKE_TTL_MS = SESSION_DEAD_COOLDOWN_MS;
+const PUBLIC_ON_DEMAND_BOOTSTRAP_KEYS = new Set(bootstrapTierKeyNames('on-demand'));
 export const WM_SESSION_DEGRADED_EVENT = 'wm-session-degraded';
 
 type WmSessionDeadReason = 'mint_failed' | 'retry_401';
@@ -44,65 +73,188 @@ let cached: StoredSession | null = null;
 let inflight: Promise<boolean> | null = null;
 let recoveryInFlight: Promise<Response | null> | null = null;
 let sessionGeneration = 0;
+let sessionIdentityGeneration = 0;
 let interceptorInstalled = false;
 let nativeSessionFetch: typeof fetch | null = null;
 let sessionDeadUntil = 0;
+let sessionDeadReason: WmSessionDeadReason | null = null;
 let sentryEnqueue: typeof enqueueSentryCall = enqueueSentryCall;
+// Two pieces of state with deliberately different lifetimes. Collapsing them
+// into one map conflates "stop spending mints on this endpoint" with "the whole
+// session looks broken", and those need opposite clearing rules: a sibling's 200
+// must NOT release the mint guard (that reopens the #5219 request+mint+retry
+// loop — a broken route re-polled every 30s would remint every 30s), but it MUST
+// void the session-wide evidence.
+//
+// 1. Suppression — raw pathname -> moment the strike lapses. Keyed by the RAW
+//    path because one id of a dynamic route being denied says nothing about its
+//    siblings. Cleared only by expiry, by its own route succeeding, by the
+//    global cooldown, or by a key-bound session replacing the identity.
+const routeStrikes = new Map<string, number>();
+// 2. Corroboration evidence — bounded route TAG -> when it failed. Keyed by the
+//    TAG so two ids of one dynamic endpoint cannot masquerade as two
+//    independent routes and fake a quorum. Any successful credentialed response
+//    clears it: a 200 proves the cookie is being delivered, which is precisely
+//    the counter-evidence the #5674 diagnosis rested on.
+const recentRouteFailures = new Map<string, number>();
+
+// Sentry tags must stay low-cardinality. Interceptor traffic only ever targets
+// our own /api/ surface, but dynamic segments (`/api/v2/shipping/webhooks/
+// <subscriberId>`) and the catch-all not-found route can still carry
+// caller-controlled values, so collapse anything id-shaped before tagging.
+const MAX_ROUTE_TAG_SEGMENTS = 8;
+const MAX_ROUTE_TAG_LENGTH = 96;
+// Per-segment cap, sized against the REAL route table rather than guessed. Of
+// the 198 registered routes, the longest final segment is
+// `get-china-corridor-control-towers` at 33 chars, with
+// `get-consumer-price-basket-series` right behind at exactly 32 — so the
+// original 32 collapsed a live panel route (ChinaCorridorPanel) to
+// `/api/supply-chain/v1/:id` and left the next long route name one character
+// from doing the same. The headroom here is the point; the id-shape rules below,
+// not this length, are what actually catch identifiers.
+const MAX_ROUTE_TAG_SEGMENT_LENGTH = 48;
+
+/**
+ * Reduce a request pathname to a bounded, aggregable Sentry tag value.
+ * Exported for direct unit coverage — the cardinality guarantee is the whole
+ * point of the tag, and it is not observable from the interceptor's outside.
+ */
+export function toRouteTag(pathname: string): string {
+  if (!pathname.startsWith('/api/')) return 'other';
+  const segments = pathname.split('/').filter(Boolean).slice(0, MAX_ROUTE_TAG_SEGMENTS);
+  const safe = segments.map((segment) => {
+    // `v1`/`v2` are real, fixed route segments.
+    if (/^v\d+$/.test(segment)) return segment;
+    if (segment.length > MAX_ROUTE_TAG_SEGMENT_LENGTH || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(segment)) return ':id';
+    // Classify on identifier SHAPE, not on merely containing a digit. Real RPC
+    // method names embed small numbers (`get-co2-monitoring`, `get-pm25-*`,
+    // `get-g20-*`) and collapsing those to `:id` would destroy the one thing
+    // this tag exists to deliver — naming the offending endpoint (#5674 AC#1) —
+    // while looking indistinguishable from a genuinely dynamic route family.
+    // An identifier instead has a word that STARTS with a digit (`8f2a11`,
+    // `2026`, `9d4c7b2e`) or a long letter+digit run (uuid/hash chunks).
+    const words = segment.split(/[-._]/);
+    if (words.some((word) => /^\d/.test(word) || (word.length >= 6 && /\d/.test(word)))) return ':id';
+    return segment;
+  });
+  return `/${safe.join('/')}`.slice(0, MAX_ROUTE_TAG_LENGTH);
+}
 
 export function isWmSessionDead(): boolean {
   if (sessionDeadUntil <= Date.now()) {
     sessionDeadUntil = 0;
+    sessionDeadReason = null;
     return false;
   }
   return true;
 }
 
-// Sentry caps tag values at 200 chars. Our own API pathnames are far shorter,
-// so this only bounds a pathological/attacker-shaped URL rather than truncating
-// anything real.
-const ROUTE_TAG_MAX_LENGTH = 120;
-
-// A path segment that is an identifier rather than a route name: a pure number,
-// a UUID, or a long token carrying a digit.
-//
-// Why this is needed at all: PREMIUM_RPC_PATHS is an EXACT-match set, so a
-// dynamic route like `/api/v2/shipping/webhooks/<subscriberId>` does NOT match
-// its parent entry and can therefore reach this tag — putting a subscriber id
-// into an indexed Sentry tag and giving the tag unbounded cardinality.
-//
-// Deliberately narrow, because over-matching destroys the diagnostic value the
-// tag exists for: our own route names are kebab-case words with no digits
-// (`summarize-article`, `list-market-quotes`), so requiring a digit keeps every
-// real segment intact while still catching ids. Version prefixes (`v1`, `v2`)
-// carry a digit but sit far under the length floor.
-const UUID_SEGMENT_RE =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const OPAQUE_MIN_LENGTH = 12;
-
-function isOpaqueSegment(segment: string): boolean {
-  if (/^\d+$/.test(segment)) return true;
-  if (UUID_SEGMENT_RE.test(segment)) return true;
-  return segment.length >= OPAQUE_MIN_LENGTH && /\d/.test(segment);
+/**
+ * Raw pathnames currently under per-route suppression.
+ *
+ * Per-route suppression is deliberately silent — no toast, no degraded event —
+ * which makes "one panel is broken but the rest of the dashboard works" the one
+ * state this module can enter with no local way to confirm it. Without this the
+ * only diagnosis is a Sentry search for `kind: wm_session_route_401` scoped to
+ * the user's IP inside the 15-minute window before the strike self-expires, so a
+ * console-reachable reader is the difference between answering that question in
+ * seconds and needing Sentry access plus exact timing. Mirrors
+ * `isWmSessionDead()`; route paths are already client-visible strings.
+ */
+export function getStruckRoutes(): string[] {
+  return [...routeStrikes.keys()].filter((rawPath) => isRouteStruck(rawPath));
 }
 
-// Bound an already-extracted pathname for use as the `route` tag. Callers pass
-// a pathname, never a full URL: the query string carries per-user parameters
-// (symbols, coordinates, langs) that would explode tag cardinality and defeat
-// the aggregation this tag exists to enable.
-function boundRouteTag(path: string): string {
-  const normalized = path
-    .split('/')
-    .map((segment) => (isOpaqueSegment(segment) ? ':id' : segment))
-    .join('/');
-  return normalized.length > ROUTE_TAG_MAX_LENGTH
-    ? normalized.slice(0, ROUTE_TAG_MAX_LENGTH)
-    : normalized;
+/**
+ * True when `rawPath` already failed a replay-with-a-fresh-cookie inside the
+ * current window. Re-running recovery for it would re-derive the same denial
+ * and spend another mint, which is the request+mint+retry amplification #5219
+ * exists to prevent.
+ */
+function isRouteStruck(rawPath: string): boolean {
+  const until = routeStrikes.get(rawPath);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  routeStrikes.delete(rawPath);
+  return false;
 }
 
-function markWmSessionDead(reason: WmSessionDeadReason, route: string): void {
+/**
+ * Record a failed fresh-mint replay for `rawPath`, and return how many DISTINCT
+ * routes have failed inside the corroboration window — i.e. how much evidence
+ * there is that the session itself (not this one endpoint) is broken.
+ *
+ * The two stores move on different clocks by design: suppression lasts
+ * SESSION_DEAD_COOLDOWN_MS so a known-bad endpoint stops costing mints, while
+ * the returned count only sees failures from the last
+ * SESSION_DEAD_CORROBORATION_MS.
+ */
+function recordRouteStrike(rawPath: string): number {
+  const now = Date.now();
+  for (const [struck, until] of routeStrikes) {
+    if (until <= now) routeStrikes.delete(struck);
+  }
+  routeStrikes.set(rawPath, now + SESSION_DEAD_ROUTE_STRIKE_TTL_MS);
+
+  const corroborationFloor = now - SESSION_DEAD_CORROBORATION_MS;
+  for (const [tag, at] of recentRouteFailures) {
+    if (at <= corroborationFloor) recentRouteFailures.delete(tag);
+  }
+  recentRouteFailures.set(toRouteTag(rawPath), now);
+  return recentRouteFailures.size;
+}
+
+/**
+ * A credentialed request just succeeded, so the browser IS delivering the
+ * session cookie. Retire the evidence that argued otherwise.
+ *
+ * Asymmetric on purpose: the succeeding route's own suppression is released
+ * (it demonstrably works again, so letting it back into recovery costs nothing),
+ * but a SIBLING's success must not release a struck route's suppression — that
+ * would put the broken endpoint back through mint-on-every-poll, which is the
+ * amplification #5219 exists to prevent. Session-wide evidence, by contrast, is
+ * void the moment anything succeeds.
+ */
+function noteRouteSuccess(rawPath: string): void {
+  routeStrikes.delete(rawPath);
+  if (recentRouteFailures.size > 0) recentRouteFailures.clear();
+  // A fresh-cookie success is stronger evidence than a two-route retry_401
+  // quorum, including when that success was already in flight as the quorum
+  // formed. Lift only retry-derived cooldowns here: mint_failed means the
+  // session endpoint itself is unavailable and retains its immediate guard.
+  if (sessionDeadReason === 'retry_401') {
+    sessionDeadUntil = 0;
+    sessionDeadReason = null;
+  }
+}
+
+function addSessionBreadcrumb(message: string, data: Record<string, string>): void {
+  // Sentry's automatic fetch instrumentation cannot see these requests: the
+  // interceptor captured `window.fetch` before the deferred Sentry.init wrapped
+  // it, so every retry it issues bypasses the SDK. The outer call DOES get a
+  // breadcrumb, but only once its promise settles — which is after this
+  // episode's captureMessage has already been sent. Without a manual crumb the
+  // 401 is invisible in the event that exists to explain it (#5674).
+  try {
+    sentryEnqueue((s) => s.addBreadcrumb({
+      category: 'wm-session',
+      level: 'warning',
+      message,
+      data,
+    }));
+  } catch { /* best-effort telemetry */ }
+}
+
+function markWmSessionDead(reason: WmSessionDeadReason, rawPath: string): void {
   const alreadyDead = isWmSessionDead();
   sessionDeadUntil = Date.now() + SESSION_DEAD_COOLDOWN_MS;
+  if (!alreadyDead) sessionDeadReason = reason;
   cached = null;
+  // The global cooldown supersedes per-route suppression — every anonymous
+  // call is already blocked, so keeping strikes alive past it would only make
+  // the first post-cooldown failure trip the quorum on stale evidence.
+  routeStrikes.clear();
+  recentRouteFailures.clear();
   try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   if (alreadyDead) return;
   console.warn('[wm-session] refreshed HttpOnly session cookie was still rejected; suppressing anonymous API calls briefly');
@@ -118,51 +270,65 @@ function markWmSessionDead(reason: WmSessionDeadReason, route: string): void {
   //
   // Guarded: a telemetry throw must never skip the degraded-event dispatch
   // below, nor turn the interceptor's recovery return into a rejection.
+  // `route` must name what actually failed, because the obvious use of this tag
+  // is to group WORLDMONITOR-WG by it and read off the offending endpoint. For
+  // retry_401 that is the replayed route. For mint_failed it is /api/wm-session:
+  // the mint returned nothing usable, and whichever route happened to be in
+  // flight is a bystander — tagging it would seed the census with innocent
+  // endpoints under the same tag name that means "the denied route" elsewhere.
+  // The bystander is still worth having, so it rides the breadcrumb instead.
+  const blockedTag = toRouteTag(rawPath);
+  const routeTag = reason === 'mint_failed' ? '/api/wm-session' : blockedTag;
+  addSessionBreadcrumb('wm-session recovery failed', { route: routeTag, blocked: blockedTag, reason });
   try {
-    sentryEnqueue((s) => {
-      // Record the failure explicitly: the 401 that caused it is invisible to
-      // Sentry's automatic fetch instrumentation for TWO compounding reasons,
-      // both verified against WORLDMONITOR-WG events.
-      //
-      //   1. The interceptor's own mint and replay go through `original` — the
-      //      window.fetch captured at install time, before the deferred
-      //      Sentry.init (scheduleSentryInit, src/main.ts) wrapped it. Those
-      //      requests never reach the SDK's wrapper at all.
-      //   2. This capture runs BEFORE the interceptor returns the 401 to the
-      //      outer (Sentry-wrapped) call, so that request's breadcrumb is
-      //      appended after the event has already been built.
-      //
-      // The net effect is a trap for whoever reads these events next: the only
-      // 401s that DO appear are the ones that correctly stepped aside from
-      // recovery and are therefore harmless, which makes an innocent route
-      // look like the culprit. Trust the `route` tag below, not the
-      // breadcrumbs.
-      // Its own try/catch, INSIDE the outer one: the breadcrumb is a
-      // nice-to-have, the capture is the only remote signal that anonymous
-      // browsing is degraded (#5245). Sharing one try would let a throwing
-      // addBreadcrumb (an extension patching window state, a malformed value,
-      // an SDK bug) skip the captureMessage below and silently drop the
-      // episode entirely.
-      try {
-        s.addBreadcrumb?.({
-          category: 'wm-session',
-          level: 'warning',
-          message: `session recovery failed (${reason})`,
-          // The 401 that triggered recovery — not necessarily the last status
-          // seen, since `mint_failed` means the remint itself never returned a
-          // usable session.
-          data: { route, triggeringStatus: 401 },
-        });
-      } catch { /* breadcrumb is best-effort; the capture below is not */ }
-      s.captureMessage(
-        'wm-session dead: anonymous API calls suppressed',
-        { level: 'warning', tags: { kind: 'wm_session_dead', reason, route } },
-      );
-    });
+    sentryEnqueue((s) => s.captureMessage(
+      'wm-session dead: anonymous API calls suppressed',
+      { level: 'warning', tags: { kind: 'wm_session_dead', reason, route: routeTag } },
+    ));
   } catch { /* best-effort telemetry */ }
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new Event(WM_SESSION_DEGRADED_EVENT));
   }
+}
+
+/**
+ * A lone route failed its replay with a demonstrably fresh cookie. Suppress
+ * just that route and report it under its own `kind` so WORLDMONITOR-WG stays
+ * the blackout counter it was designed to be (#5245) while the offending
+ * endpoint still becomes aggregable. Bounded to one report per route per
+ * cooldown window: a struck route short-circuits before recovery runs again.
+ */
+function reportRouteRecoveryFailure(rawPath: string): void {
+  const routeTag = toRouteTag(rawPath);
+  addSessionBreadcrumb('wm-session route denied after fresh mint', { route: routeTag });
+  try {
+    sentryEnqueue((s) => s.captureMessage(
+      'wm-session route rejected after fresh mint',
+      { level: 'info', tags: { kind: 'wm_session_route_401', route: routeTag } },
+    ));
+  } catch { /* best-effort telemetry */ }
+}
+
+/**
+ * Decide how far a failed recovery should reach.
+ *
+ * `mint_failed` is session-wide by construction — /api/wm-session itself did
+ * not hand back a cookie, so no route can succeed. It trips the global
+ * cooldown immediately, exactly as before.
+ *
+ * `retry_401` only implicates the one route that was replayed, so it needs
+ * SESSION_DEAD_ROUTE_QUORUM distinct routes before it may black out the tab.
+ */
+function noteRecoveryFailure(reason: WmSessionDeadReason, rawPath: string): void {
+  if (reason === 'mint_failed') {
+    markWmSessionDead(reason, rawPath);
+    return;
+  }
+  if (recordRouteStrike(rawPath) >= SESSION_DEAD_ROUTE_QUORUM) {
+    markWmSessionDead(reason, rawPath);
+    return;
+  }
+  reportRouteRecoveryFailure(rawPath);
 }
 
 function sessionDegradedResponse(): Response {
@@ -248,7 +414,13 @@ export async function establishWmKeySession(keys: { widgetKey?: string; proKey?:
   if (!fresh) return false;
   cached = fresh;
   sessionGeneration += 1;
+  sessionIdentityGeneration += 1;
   sessionDeadUntil = 0;
+  sessionDeadReason = null;
+  // A key-bound session is a clean slate: strikes recorded against the old
+  // anonymous identity say nothing about what this one may reach.
+  routeStrikes.clear();
+  recentRouteFailures.clear();
   saveToStorage(fresh);
   return true;
 }
@@ -272,8 +444,12 @@ export function __resetWmSessionForTests(): void {
   inflight = null;
   recoveryInFlight = null;
   sessionGeneration = 0;
+  sessionIdentityGeneration = 0;
   interceptorInstalled = false;
   sessionDeadUntil = 0;
+  sessionDeadReason = null;
+  routeStrikes.clear();
+  recentRouteFailures.clear();
   sentryEnqueue = enqueueSentryCall;
   fetchNewSessionTimeoutMs = 10_000;
 }
@@ -352,12 +528,27 @@ function isCredentiallessPublicDataRequest(
   if (pathname !== '/api/bootstrap' || method.toUpperCase() !== 'GET') return false;
 
   const params = Array.from(parsed.searchParams.keys());
-  if (params.some((key) => key !== 'tier' && key !== 'public')) return false;
-
   const tiers = parsed.searchParams.getAll('tier');
   const publicFlags = parsed.searchParams.getAll('public');
-  return tiers.length === 1
+  if (
+    !params.some((key) => key !== 'tier' && key !== 'public')
+    && tiers.length === 1
     && (tiers[0] === 'fast' || tiers[0] === 'slow')
+    && publicFlags.length === 1
+    && publicFlags[0] === '1'
+  ) {
+    return true;
+  }
+
+  // Public on-demand hydration uses one registered key per CDN URL. Reuse the
+  // shared tier registry so a credentials:'omit' request cannot escape the
+  // session guard merely by presenting an arbitrary single-key shape.
+  if (params.some((key) => key !== 'keys' && key !== 'public')) return false;
+  const keys = parsed.searchParams.getAll('keys');
+  const key = keys[0];
+  return keys.length === 1
+    && typeof key === 'string'
+    && PUBLIC_ON_DEMAND_BOOTSTRAP_KEYS.has(key)
     && publicFlags.length === 1
     && publicFlags[0] === '1';
 }
@@ -457,6 +648,24 @@ export function installWmSessionFetchInterceptor(): void {
       return original(src, { ...withCredentials(init), headers: h });
     };
 
+    // Replay once with whatever cookie is current now and record what that
+    // proves about THIS route. Used by both mint-free replay paths below (the
+    // stale-generation branch and the concurrent-burst follower branch), which
+    // must report identically — a 401 that survives a newer cookie is
+    // fresh-cookie evidence wherever it is observed.
+    const requestSessionIdentityGeneration = sessionIdentityGeneration;
+    const isCurrentSessionIdentity = (): boolean => (
+      sessionIdentityGeneration === requestSessionIdentityGeneration
+    );
+    const replayAndReport = async (): Promise<Response> => {
+      const replayed = await sendWith(new Headers(headers), requestClone ?? input);
+      if (isCurrentSessionIdentity()) {
+        if (replayed.status === 401) noteRecoveryFailure('retry_401', path);
+        else noteRouteSuccess(path);
+      }
+      return replayed;
+    };
+
     const requestSessionGeneration = sessionGeneration;
     const resp = await sendWith(headers, input);
 
@@ -465,7 +674,17 @@ export function installWmSessionFetchInterceptor(): void {
     // had no token to begin with OR the token we sent was rejected, mint a
     // fresh one and replay ONCE. Premium routes already returned above; the
     // wms_ token is irrelevant there.
-    if (resp.status !== 401) return resp;
+    if (resp.status !== 401) {
+      // Anything other than 401 means the server did not reject our credential,
+      // so neither "this route is denied" nor "the session is dead" is supported
+      // any more. Deliberately keyed on "not 401" rather than on 2xx: this
+      // module's whole model is that 401 is the session signal, and biasing the
+      // other way (treating a 500 as continued evidence of a dead session) is
+      // what produces blackouts of healthy sessions. See noteRouteSuccess for
+      // why this releases the session-wide evidence but not a sibling's guard.
+      if (isCurrentSessionIdentity()) noteRouteSuccess(path);
+      return resp;
+    }
 
     // #5674 — premiumFetch marked this as a premium call it could not
     // authenticate, so the 401 is the expected auth denial, not a rejected
@@ -489,9 +708,21 @@ export function installWmSessionFetchInterceptor(): void {
     // A slower initial request can report the old cookie after another caller
     // already recovered it. Replay with the newer cookie instead of clearing
     // that success and spending another mint.
+    //
+    // Checked BEFORE the struck-route short-circuit below: this branch spends no
+    // mint, so a struck route must not be denied it — otherwise a route stays
+    // pinned to a stale 401 for the rest of its 15-minute window even after some
+    // unrelated caller has already obtained a cookie that would work. A 401 that
+    // survives the newer cookie IS fresh-cookie evidence, so report it.
     if (sessionGeneration !== requestSessionGeneration) {
-      return sendWith(new Headers(headers), requestClone ?? input);
+      return replayAndReport();
     }
+
+    // This route already 401'd once with a demonstrably fresh cookie. Running
+    // recovery again would re-derive the same denial at the cost of another
+    // mint, so hand the server's own verdict back to the caller untouched —
+    // and, critically, leave the session (and every other route) alone.
+    if (isRouteStruck(path)) return resp;
 
     // Invalidate the cached expiry (and its sessionStorage twin) before
     // re-minting. ensureWmSession() is opportunistic — without invalidation,
@@ -507,15 +738,11 @@ export function installWmSessionFetchInterceptor(): void {
       const recovery = (async (): Promise<Response | null> => {
         const fresh = await ensureWmSession().catch(() => false);
         if (!fresh) {
-          markWmSessionDead('mint_failed', boundRouteTag(path));
+          if (isCurrentSessionIdentity()) noteRecoveryFailure('mint_failed', path);
           return null;
         }
-        const retryResp = await sendWith(new Headers(headers), requestClone ?? input);
-        if (retryResp.status === 401) {
-          markWmSessionDead('retry_401', boundRouteTag(path));
-          return null;
-        }
-        return retryResp;
+        const retryResp = await replayAndReport();
+        return retryResp.status === 401 ? null : retryResp;
       })();
       recoveryInFlight = recovery;
       void recovery.then(
@@ -526,8 +753,19 @@ export function installWmSessionFetchInterceptor(): void {
     }
 
     const verified = await recoveryInFlight;
-    if (!verified) return resp;
-    return sendWith(new Headers(headers), requestClone ?? input);
+    if (!verified) {
+      // The leader's replay failed, but that verdict is about the LEADER's route.
+      // A dashboard launches its panels together, so the session-wide failure
+      // this quorum exists to catch (cookie undeliverable => every route 401s)
+      // arrives as one concurrent burst — and if every follower just returned
+      // here, the burst would contribute exactly ONE strike and never corroborate
+      // itself. A fresh cookie does exist unless the mint itself failed (which
+      // already blacked out globally), so replay once and report our OWN route's
+      // verdict. Costs no mint: recoveryInFlight already spent the only one.
+      if (isWmSessionDead()) return resp;
+      return replayAndReport();
+    }
+    return replayAndReport();
   };
 
   // Layer 1 — periodic refresh. The token is short-lived (12h server-side)
