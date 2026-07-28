@@ -28,6 +28,9 @@ import "worldmonitor/intelligence/v1/get_china_decision_signals.proto";
 import "worldmonitor/intelligence/v1/get_regional_snapshot.proto";
 import "worldmonitor/intelligence/v1/get_regime_history.proto";
 import "worldmonitor/intelligence/v1/get_regional_brief.proto";
+import "worldmonitor/intelligence/v1/search_intel_history.proto";
+import "worldmonitor/intelligence/v1/get_intel_timeline.proto";
+import "worldmonitor/intelligence/v1/get_similar_events.proto";
 
 // IntelligenceService provides APIs for technical and strategic intelligence.
 service IntelligenceService {
@@ -208,5 +211,27 @@ service IntelligenceService {
   // Written by scripts/seed-regional-briefs.mjs on a weekly cron. Premium-gated.
   rpc GetRegionalBrief(GetRegionalBriefRequest) returns (GetRegionalBriefResponse) {
     option (sebuf.http.config) = {path: "/get-regional-brief", method: HTTP_METHOD_GET};
+  }
+
+  // SearchIntelHistory searches the durable historical intelligence store
+  // (convex/intelHistory.ts) by semantic similarity to a free-text query.
+  // The handler embeds the query, so each cache miss costs one embeddings
+  // call — the route carries its own fail-closed rate policy. Premium-gated.
+  rpc SearchIntelHistory(SearchIntelHistoryRequest) returns (SearchIntelHistoryResponse) {
+    option (sebuf.http.config) = {path: "/search-intel-history", method: HTTP_METHOD_POST};
+  }
+
+  // GetIntelTimeline returns the durable historical intelligence store
+  // newest-first for one domain and/or country. Pure index read — no
+  // embedding, no ranking. Premium-gated.
+  rpc GetIntelTimeline(GetIntelTimelineRequest) returns (GetIntelTimelineResponse) {
+    option (sebuf.http.config) = {path: "/get-intel-timeline", method: HTTP_METHOD_GET};
+  }
+
+  // GetSimilarEvents returns historical precedents for a described situation.
+  // Same vector search as SearchIntelHistory over a longer free-text input,
+  // so it is likewise embeddings-backed and rate-policied. Premium-gated.
+  rpc GetSimilarEvents(GetSimilarEventsRequest) returns (GetSimilarEventsResponse) {
+    option (sebuf.http.config) = {path: "/get-similar-events", method: HTTP_METHOD_POST};
   }
 }

@@ -881,6 +881,64 @@ export interface RegionalBrief {
   model: string;
 }
 
+export interface SearchIntelHistoryRequest {
+  query: string;
+  domain: string;
+  country: string;
+  from: number;
+  to: number;
+  limit: number;
+}
+
+export interface SearchIntelHistoryResponse {
+  records: IntelHistoryRecord[];
+  query: string;
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
+export interface IntelHistoryRecord {
+  id: string;
+  domain: string;
+  resource: string;
+  country: string;
+  category: string;
+  title: string;
+  summary: string;
+  sourceUrl: string;
+  occurredAt: number;
+  ingestedAt: number;
+  score: number;
+}
+
+export interface GetIntelTimelineRequest {
+  domain: string;
+  country: string;
+  from: number;
+  to: number;
+  limit: number;
+}
+
+export interface GetIntelTimelineResponse {
+  records: IntelHistoryRecord[];
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
+export interface GetSimilarEventsRequest {
+  situation: string;
+  domain: string;
+  country: string;
+  limit: number;
+}
+
+export interface GetSimilarEventsResponse {
+  records: IntelHistoryRecord[];
+  situation: string;
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
 export type SeverityLevel = "SEVERITY_LEVEL_UNSPECIFIED" | "SEVERITY_LEVEL_LOW" | "SEVERITY_LEVEL_MEDIUM" | "SEVERITY_LEVEL_HIGH";
 
 export type TrendDirection = "TREND_DIRECTION_UNSPECIFIED" | "TREND_DIRECTION_RISING" | "TREND_DIRECTION_STABLE" | "TREND_DIRECTION_FALLING";
@@ -1598,6 +1656,83 @@ export class IntelligenceServiceClient {
     }
 
     return await resp.json() as GetRegionalBriefResponse;
+  }
+
+  async searchIntelHistory(req: SearchIntelHistoryRequest, options?: IntelligenceServiceCallOptions): Promise<SearchIntelHistoryResponse> {
+    let path = "/api/intelligence/v1/search-intel-history";
+    const url = this.baseURL + path;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req),
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as SearchIntelHistoryResponse;
+  }
+
+  async getIntelTimeline(req: GetIntelTimelineRequest, options?: IntelligenceServiceCallOptions): Promise<GetIntelTimelineResponse> {
+    let path = "/api/intelligence/v1/get-intel-timeline";
+    const params = new URLSearchParams();
+    if (req.domain != null && req.domain !== "") params.set("domain", String(req.domain));
+    if (req.country != null && req.country !== "") params.set("country", String(req.country));
+    if (req.from != null && req.from !== 0) params.set("from", String(req.from));
+    if (req.to != null && req.to !== 0) params.set("to", String(req.to));
+    if (req.limit != null && req.limit !== 0) params.set("limit", String(req.limit));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetIntelTimelineResponse;
+  }
+
+  async getSimilarEvents(req: GetSimilarEventsRequest, options?: IntelligenceServiceCallOptions): Promise<GetSimilarEventsResponse> {
+    let path = "/api/intelligence/v1/get-similar-events";
+    const url = this.baseURL + path;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req),
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetSimilarEventsResponse;
   }
 
   private async handleError(resp: Response): Promise<never> {

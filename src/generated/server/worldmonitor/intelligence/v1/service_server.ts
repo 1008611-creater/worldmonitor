@@ -881,6 +881,64 @@ export interface RegionalBrief {
   model: string;
 }
 
+export interface SearchIntelHistoryRequest {
+  query: string;
+  domain: string;
+  country: string;
+  from: number;
+  to: number;
+  limit: number;
+}
+
+export interface SearchIntelHistoryResponse {
+  records: IntelHistoryRecord[];
+  query: string;
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
+export interface IntelHistoryRecord {
+  id: string;
+  domain: string;
+  resource: string;
+  country: string;
+  category: string;
+  title: string;
+  summary: string;
+  sourceUrl: string;
+  occurredAt: number;
+  ingestedAt: number;
+  score: number;
+}
+
+export interface GetIntelTimelineRequest {
+  domain: string;
+  country: string;
+  from: number;
+  to: number;
+  limit: number;
+}
+
+export interface GetIntelTimelineResponse {
+  records: IntelHistoryRecord[];
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
+export interface GetSimilarEventsRequest {
+  situation: string;
+  domain: string;
+  country: string;
+  limit: number;
+}
+
+export interface GetSimilarEventsResponse {
+  records: IntelHistoryRecord[];
+  situation: string;
+  partial: boolean;
+  upstreamUnavailable: boolean;
+}
+
 export type SeverityLevel = "SEVERITY_LEVEL_UNSPECIFIED" | "SEVERITY_LEVEL_LOW" | "SEVERITY_LEVEL_MEDIUM" | "SEVERITY_LEVEL_HIGH";
 
 export type TrendDirection = "TREND_DIRECTION_UNSPECIFIED" | "TREND_DIRECTION_RISING" | "TREND_DIRECTION_STABLE" | "TREND_DIRECTION_FALLING";
@@ -966,6 +1024,9 @@ export interface IntelligenceServiceHandler {
   getRegionalSnapshot(ctx: ServerContext, req: GetRegionalSnapshotRequest): Promise<GetRegionalSnapshotResponse>;
   getRegimeHistory(ctx: ServerContext, req: GetRegimeHistoryRequest): Promise<GetRegimeHistoryResponse>;
   getRegionalBrief(ctx: ServerContext, req: GetRegionalBriefRequest): Promise<GetRegionalBriefResponse>;
+  searchIntelHistory(ctx: ServerContext, req: SearchIntelHistoryRequest): Promise<SearchIntelHistoryResponse>;
+  getIntelTimeline(ctx: ServerContext, req: GetIntelTimelineRequest): Promise<GetIntelTimelineResponse>;
+  getSimilarEvents(ctx: ServerContext, req: GetSimilarEventsRequest): Promise<GetSimilarEventsResponse>;
 }
 
 export function createIntelligenceServiceRoutes(
@@ -2146,6 +2207,143 @@ export function createIntelligenceServiceRoutes(
 
           const result = await handler.getRegionalBrief(ctx, body);
           return new Response(JSON.stringify(result as GetRegionalBriefResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "POST",
+      path: "/api/intelligence/v1/search-intel-history",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const body = await req.json() as SearchIntelHistoryRequest;
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("searchIntelHistory", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.searchIntelHistory(ctx, body);
+          return new Response(JSON.stringify(result as SearchIntelHistoryResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/intelligence/v1/get-intel-timeline",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetIntelTimelineRequest = {
+            domain: params.get("domain") ?? "",
+            country: params.get("country") ?? "",
+            from: Number(params.get("from") ?? "0"),
+            to: Number(params.get("to") ?? "0"),
+            limit: Number(params.get("limit") ?? "0"),
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getIntelTimeline", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getIntelTimeline(ctx, body);
+          return new Response(JSON.stringify(result as GetIntelTimelineResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "POST",
+      path: "/api/intelligence/v1/get-similar-events",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const body = await req.json() as GetSimilarEventsRequest;
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getSimilarEvents", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getSimilarEvents(ctx, body);
+          return new Response(JSON.stringify(result as GetSimilarEventsResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });

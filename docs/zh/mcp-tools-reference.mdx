@@ -999,6 +999,116 @@ curl -s https://worldmonitor.app/mcp \
 
 </CodeGroup>
 
+## 历史情报
+
+这三个 Pro 工具读取持久化历史存储 —— 冲突、军事和能源 seeder 在每次运行后向其追加记录。它们共享同一条记录结构 —— `id`、`domain`、`resource`、`country`、`category`、`title`、`summary`、`sourceUrl`、`occurredAt`、`ingestedAt`、`score` —— 因此客户端只需一套解析逻辑即可覆盖三者。
+
+<Note>
+该存储从历史采集启用当天开始积累，并从那时起逐步加深；不存在深度回填。早期时间窗返回空结果意味着该时间窗尚未被覆盖，而不是当时什么都没发生。每个响应还带有 `upstreamUnavailable`：为 `true` 时，`records` 为空是因为查询失败，而绝不是因为没有匹配项。
+</Note>
+
+### `search_intel_history`
+
+对存储的历史进行语义搜索，按与自由文本查询的相似度排序。该路由使用与写入向量时相同的模型嵌入你的查询，因此措辞越接近分析师描述该事件的方式，排序效果越好。可选的 `domain`、`country` 和 `occurredAt` 时间窗会在排序前收窄候选集。每条记录带有 `[-1, 1]` 区间内的余弦相似度 `score`；越高越接近。
+
+**参数：**
+
+| 名称 | 类型 | 必填 | 描述 |
+|------|------|---------:|-------------|
+| `query` | string | **是** | 自由文本搜索短语，2-500 个字符，例如 "artillery strikes near Kharkiv" |
+| `domain` | string | 否 | `conflict`、`military`、`energy` 之一。省略则搜索全部领域 |
+| `country` | string | 否 | ISO 3166-1 alpha-2 大写代码，例如 "UA"。省略则搜索全部国家 |
+| `from` | number | 否 | 最早的 `occurredAt`，Unix 纪元毫秒，含边界。省略表示无下界 |
+| `to` | number | 否 | 最晚的 `occurredAt`，Unix 纪元毫秒，含边界。省略表示无上界 |
+| `limit` | integer | 否 | 最大匹配数。省略时路由返回 20 条，上限为 64 |
+
+- **API 端点：** `POST /api/intelligence/v1/search-intel-history`
+- **类型：** 实时 RPC — 先嵌入查询，再对历史存储排序。Edge 运行时超时：**12.0s**。
+- **成本提示：** 每次调用消耗一次 embeddings 往返，因此该路由采用 fail-closed 限流。优先使用一个措辞良好的查询，而不是多个近似重复的查询。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"search_intel_history","arguments":{"query":"port closure after drone strike","domain":"conflict","limit":10}}
+  }'
+```
+
+</CodeGroup>
+
+### `get_intel_timeline`
+
+按时间倒序读取某一范围内存储的历史。纯索引读取 —— 无嵌入、无排序 —— 因此仅按 `occurredAt` 排列，且每条记录的 `score` 均为 `0`。
+
+`domain` 与 `country` 至少需要提供一个。它们是该存储上仅有的两个索引范围；无范围的读取没有索引可用，会以参数错误被拒绝，而不会退化为全表扫描。同时提供两者则收窄为二者的交集。
+
+**参数：**
+
+| 名称 | 类型 | 必填 | 描述 |
+|------|------|---------:|-------------|
+| `domain` | string | 二选一 | `conflict`、`military`、`energy` 之一。未设置 `country` 时必填 |
+| `country` | string | 二选一 | ISO 3166-1 alpha-2 大写代码，例如 "UA"。未设置 `domain` 时必填 |
+| `from` | number | 否 | 最早的 `occurredAt`，Unix 纪元毫秒，含边界。省略表示无下界 |
+| `to` | number | 否 | 最晚的 `occurredAt`，Unix 纪元毫秒，含边界。省略表示无上界 |
+| `limit` | integer | 否 | 最大事件数。省略时路由返回 50 条，上限为 200 |
+
+- **API 端点：** `GET /api/intelligence/v1/get-intel-timeline`
+- **类型：** 实时 RPC — 一次存储读取，无嵌入。Edge 运行时超时：**8.0s**。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"get_intel_timeline","arguments":{"country":"UA","domain":"conflict","limit":50}}
+  }'
+```
+
+</CodeGroup>
+
+### `get_similar_events`
+
+为你描述的情境查找历史先例。与 `search_intel_history` 使用相同的向量搜索，但输入更长：`situation` 是对一个正在发展的情境的描述，而非搜索短语，一两句上下文比一个关键词排序效果更好。结果集刻意保持较小，因为它被当作先例清单阅读，而不是用来滚动浏览。
+
+通常不设置 `country` 才是正确选择 —— 别处的先例同样是先例。空清单应被理解为"该情境可能是新颖的"这一较弱证据，而非确证：该存储只包含三个 seeder 自采集启用以来发布的内容。
+
+**参数：**
+
+| 名称 | 类型 | 必填 | 描述 |
+|------|------|---------:|-------------|
+| `situation` | string | **是** | 情境描述，10-1000 个字符，例如 "a naval blockade closes a major grain export corridor for weeks" |
+| `domain` | string | 否 | `conflict`、`military`、`energy` 之一。省略则搜索全部领域 |
+| `country` | string | 否 | ISO 3166-1 alpha-2 大写代码，例如 "EG"。省略则搜索全部国家 |
+| `limit` | integer | 否 | 最大先例数。省略时路由返回 10 条，上限为 32 |
+
+- **API 端点：** `POST /api/intelligence/v1/get-similar-events`
+- **类型：** 实时 RPC — 先嵌入情境文本，再对历史存储排序。Edge 运行时超时：**12.0s**。
+- **成本提示：** 与 `search_intel_history` 一样由 embeddings 支撑，因此适用同样的 fail-closed 限流策略。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"get_similar_events","arguments":{"situation":"a naval blockade closes a major grain export corridor for weeks"}}
+  }'
+```
+
+</CodeGroup>
+
 ## 交通与基础设施
 
 ### `get_aviation_status`

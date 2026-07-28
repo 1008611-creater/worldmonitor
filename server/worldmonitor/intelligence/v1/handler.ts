@@ -26,6 +26,9 @@ import { getChinaDecisionSignals } from './get-china-decision-signals';
 import { getRegionalSnapshot } from './get-regional-snapshot';
 import { getRegimeHistory } from './get-regime-history';
 import { getRegionalBrief } from './get-regional-brief';
+import { searchIntelHistory } from './search-intel-history';
+import { getIntelTimeline } from './get-intel-timeline';
+import { getSimilarEvents } from './get-similar-events';
 
 export const intelligenceHandler: IntelligenceServiceHandler = {
   getRiskScores,
@@ -54,4 +57,7 @@ export const intelligenceHandler: IntelligenceServiceHandler = {
   getRegionalSnapshot,
   getRegimeHistory,
   getRegionalBrief,
+  searchIntelHistory,
+  getIntelTimeline,
+  getSimilarEvents,
 };

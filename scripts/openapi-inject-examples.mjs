@@ -493,6 +493,14 @@ function stringExample(name, schema = {}, context = {}) {
   // field. Keep the generated response example truthful instead of emitting
   // the generic non-empty string placeholder.
   if (key === 'abstract' && (where.includes('listdefensepatents') || where.includes('list-defense-patents'))) return '';
+  // Intel-history scope: `domain` collides with web-domain params on other
+  // ops, so anchor on the exact accepted-values pattern instead of the name.
+  // If the contract's pattern ever changes this falls through to the generic
+  // heuristic and the schema-validity check reds — the correct failure mode.
+  if (schema.pattern === '^(conflict|military|energy)?$') return 'conflict';
+  // get-similar-events `situation` enforces min_len 10; the generic
+  // placeholder is shorter and produces an un-runnable request sample.
+  if (key === 'situation') return constrainedString('chokepoint closure with an energy price spike', schema);
   const override = overrideStringExample(key, context);
   if (override !== undefined) return constrainedString(override, schema);
   if (shouldUseDescriptionClosedValue(context)) {

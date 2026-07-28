@@ -221,6 +221,34 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // classify-event budget (same limit/window) — both are AI-backed Intelligence
   // RPCs. (#4676)
   '/api/intelligence/v1/deduct-situation': { limit: 600, window: '60 s' },
+  // Historical intelligence memory (#5694): both semantic routes embed the
+  // caller's free text through the OpenRouter embeddings API on every cache
+  // miss, so they are provider-backed spend, not pure reads. They are also
+  // premium-gated, which means the gateway serves them with no CDN cache — a
+  // The three intel-history reads. All are Pro-gated and reach the function on
+  // every request, but they spend two different budgets, so they are sized
+  // against two different ceilings.
+  //
+  // search + similar-events each embed their input on a paid provider. They
+  // share ONE budget while the registry is keyed per PATH, so a caller
+  // alternating them gets the sum, not the cap — 30/min each holds the
+  // combined worst case at the 60/min per-principal embeddings bill this is
+  // sized for. Still generous for interactive use (a search plus follow-ups),
+  // and far under the LLM routes' 600/min because nothing here runs in a
+  // page-load fan-out.
+  //
+  // timeline embeds nothing, which is why it originally carried no policy at
+  // all. That reasoning was right about money and wrong about the resource
+  // that actually scales with retention: Convex reads whole documents, and
+  // every intelHistory row carries a 512-float embedding the projection
+  // immediately discards. One limit=200 call scoped by both domain and
+  // country scans TIMELINE_MAX_SCAN=800 rows (4x over-fetch for the
+  // post-filter) — roughly 3MB of Convex read budget, which the 600/min
+  // availability-first fallback did not bound. 120/min keeps a timeline read
+  // comfortable while capping that worst case.
+  '/api/intelligence/v1/search-intel-history': { limit: 30, window: '60 s' },
+  '/api/intelligence/v1/get-similar-events': { limit: 30, window: '60 s' },
+  '/api/intelligence/v1/get-intel-timeline': { limit: 120, window: '60 s' },
   // Batch humanitarian-summary fans out to the external HAPI (humdata) provider
   // on cache miss — up to 25 countries per request, 5 concurrent upstream
   // fetches. Batch aircraft-details fans out to the external Wingbits provider —
@@ -303,6 +331,12 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   },
   '/api/intelligence/v1/deduct-situation': {
     reason: 'LLM-backed situational deduction can drive provider spend on cache misses.',
+  },
+  '/api/intelligence/v1/search-intel-history': {
+    reason: 'Semantic history search embeds the caller\'s query through a paid embeddings provider on every request.',
+  },
+  '/api/intelligence/v1/get-similar-events': {
+    reason: 'Precedent lookup embeds the caller\'s situation text through a paid embeddings provider on every request.',
   },
   '/api/conflict/v1/get-humanitarian-summary-batch': {
     reason: 'Batch summary fans out to the external HAPI (humdata) provider on cache miss.',
