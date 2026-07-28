@@ -280,18 +280,27 @@ export interface TelegramMessage {
 }
 
 export interface GetCompanyEnrichmentRequest {
+  /** @deprecated */
   domain: string;
   name: string;
+  ticker: string;
 }
 
 export interface GetCompanyEnrichmentResponse {
   company?: EnrichedCompany;
+  /** @deprecated */
   github?: EnrichedGithub;
+  /** @deprecated */
   techStack: TechStackItem[];
   secFilings?: SecFilings;
+  /** @deprecated */
   hackerNewsMentions: HNMention[];
   enrichedAtMs: number;
   sources: string[];
+  market?: CompanyMarketProfile;
+  earningsSurprises: EarningsSurprise[];
+  newsMentions: CompanyNewsMention[];
+  unavailable: boolean;
 }
 
 export interface EnrichedCompany {
@@ -300,7 +309,10 @@ export interface EnrichedCompany {
   description: string;
   location: string;
   website: string;
+  /** @deprecated */
   founded: number;
+  cik: string;
+  ticker: string;
 }
 
 export interface EnrichedGithub {
@@ -324,6 +336,8 @@ export interface SecFiling {
   form: string;
   fileDate: string;
   description: string;
+  url: string;
+  items: string[];
 }
 
 export interface HNMention {
@@ -334,17 +348,49 @@ export interface HNMention {
   createdAtMs: number;
 }
 
+export interface CompanyMarketProfile {
+  exchange: string;
+  industry: string;
+  marketCapMusd: number;
+  ipoDate: string;
+  logoUrl: string;
+  country: string;
+  currency: string;
+}
+
+export interface EarningsSurprise {
+  period: string;
+  actualEps: number;
+  estimateEps: number;
+  surprise: number;
+  surprisePercent: number;
+  year: number;
+  quarter: number;
+}
+
+export interface CompanyNewsMention {
+  title: string;
+  url: string;
+  source: string;
+  publishedAtMs: number;
+}
+
 export interface ListCompanySignalsRequest {
   company: string;
+  /** @deprecated */
   domain: string;
+  ticker: string;
 }
 
 export interface ListCompanySignalsResponse {
   company: string;
+  /** @deprecated */
   domain: string;
   signals: CompanySignal[];
   summary?: SignalSummary;
   discoveredAtMs: number;
+  cik: string;
+  unavailable: boolean;
 }
 
 export interface CompanySignal {
@@ -371,6 +417,57 @@ export interface SignalSummary {
   byType: Record<string, number>;
   strongestSignal?: CompanySignal;
   signalDiversity: number;
+}
+
+export interface SearchSecFilingsRequest {
+  query: string;
+  forms: string;
+  startDate: string;
+  endDate: string;
+  limit: number;
+}
+
+export interface SearchSecFilingsResponse {
+  results: SecFilingSearchResult[];
+  total: number;
+  unavailable: boolean;
+  fetchedAtMs: number;
+}
+
+export interface SecFilingSearchResult {
+  company: string;
+  cik: string;
+  form: string;
+  fileDate: string;
+  items: string[];
+  url: string;
+  accession: string;
+}
+
+export interface ListMaterialEventsRequest {
+  itemCode: string;
+  limit: number;
+}
+
+export interface ListMaterialEventsResponse {
+  events: MaterialEvent[];
+  unavailable: boolean;
+  fetchedAtMs: number;
+}
+
+export interface MaterialEvent {
+  company: string;
+  cik: string;
+  form: string;
+  accession: string;
+  filedAtMs: number;
+  items: MaterialEventItem[];
+  url: string;
+}
+
+export interface MaterialEventItem {
+  code: string;
+  description: string;
 }
 
 export interface GetCountryFactsRequest {
@@ -1290,6 +1387,7 @@ export class IntelligenceServiceClient {
     const params = new URLSearchParams();
     if (req.domain != null && req.domain !== "") params.set("domain", String(req.domain));
     if (req.name != null && req.name !== "") params.set("name", String(req.name));
+    if (req.ticker != null && req.ticker !== "") params.set("ticker", String(req.ticker));
     const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
 
     const headers: Record<string, string> = {
@@ -1316,6 +1414,7 @@ export class IntelligenceServiceClient {
     const params = new URLSearchParams();
     if (req.company != null && req.company !== "") params.set("company", String(req.company));
     if (req.domain != null && req.domain !== "") params.set("domain", String(req.domain));
+    if (req.ticker != null && req.ticker !== "") params.set("ticker", String(req.ticker));
     const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
 
     const headers: Record<string, string> = {
@@ -1335,6 +1434,61 @@ export class IntelligenceServiceClient {
     }
 
     return await resp.json() as ListCompanySignalsResponse;
+  }
+
+  async searchSecFilings(req: SearchSecFilingsRequest, options?: IntelligenceServiceCallOptions): Promise<SearchSecFilingsResponse> {
+    let path = "/api/intelligence/v1/search-sec-filings";
+    const params = new URLSearchParams();
+    if (req.query != null && req.query !== "") params.set("query", String(req.query));
+    if (req.forms != null && req.forms !== "") params.set("forms", String(req.forms));
+    if (req.startDate != null && req.startDate !== "") params.set("start_date", String(req.startDate));
+    if (req.endDate != null && req.endDate !== "") params.set("end_date", String(req.endDate));
+    if (req.limit != null && req.limit !== 0) params.set("limit", String(req.limit));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as SearchSecFilingsResponse;
+  }
+
+  async listMaterialEvents(req: ListMaterialEventsRequest, options?: IntelligenceServiceCallOptions): Promise<ListMaterialEventsResponse> {
+    let path = "/api/intelligence/v1/list-material-events";
+    const params = new URLSearchParams();
+    if (req.itemCode != null && req.itemCode !== "") params.set("item_code", String(req.itemCode));
+    if (req.limit != null && req.limit !== 0) params.set("limit", String(req.limit));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListMaterialEventsResponse;
   }
 
   async getCountryFacts(req: GetCountryFactsRequest, options?: IntelligenceServiceCallOptions): Promise<GetCountryFactsResponse> {

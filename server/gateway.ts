@@ -323,6 +323,8 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/intelligence/v1/list-telegram-feed': 'fast',
   '/api/intelligence/v1/get-company-enrichment': 'slow',
   '/api/intelligence/v1/list-company-signals': 'slow',
+  '/api/intelligence/v1/search-sec-filings': 'medium',
+  '/api/intelligence/v1/list-material-events': 'medium',
   '/api/news/v1/summarize-article-cache': 'slow',
 
   '/api/imagery/v1/search-imagery': 'static',

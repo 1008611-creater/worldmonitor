@@ -264,6 +264,14 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // Legacy /api/sanctions-entity-search rate limit was 30/min per IP. Preserve
   // that budget now that LookupSanctionEntity proxies OpenSanctions live.
   '/api/sanctions/v1/lookup-sanction-entity': { limit: 30, window: '60 s' },
+  // Corporate intelligence (#5695): each cache miss proxies SEC EDGAR and/or
+  // Finnhub on the caller's behalf, and the per-company inputs are effectively
+  // unbounded (any ticker/name/domain), so these cannot inherit the fail-open
+  // global fallback. Same 30/min provider-proxy budget as the sanctions lookup
+  // and batch fan-out routes above.
+  '/api/intelligence/v1/get-company-enrichment': { limit: 30, window: '60 s' },
+  '/api/intelligence/v1/list-company-signals': { limit: 30, window: '60 s' },
+  '/api/intelligence/v1/search-sec-filings': { limit: 30, window: '60 s' },
   // Lead capture: preserve the 3/hr and 5/hr budgets from legacy api/contact.js
   // and api/register-interest.js. Lower limits than normal IP rate limit since
   // these hit Convex + Resend per request.
@@ -341,6 +349,15 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   '/api/conflict/v1/get-humanitarian-summary-batch': {
     reason: 'Batch summary fans out to the external HAPI (humdata) provider on cache miss.',
   },
+  '/api/intelligence/v1/get-company-enrichment': {
+    reason: 'Per-company composite fans out to SEC EDGAR and Finnhub on cache miss.',
+  },
+  '/api/intelligence/v1/list-company-signals': {
+    reason: 'Per-company signal discovery fans out to SEC EDGAR and Finnhub on cache miss.',
+  },
+  '/api/intelligence/v1/search-sec-filings': {
+    reason: 'Full-text filing search proxies SEC EDGAR on cache miss with unbounded query cardinality.',
+  },
   '/api/military/v1/get-aircraft-details-batch': {
     reason: 'Batch enrichment fans out to the external Wingbits provider on cache miss.',
   },
@@ -377,6 +394,9 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
 export const GLOBAL_RATE_LIMIT_FALLBACK_READ_ROUTES: Record<string, RateLimitPolicyDecision> = {
   '/api/aviation/v1/list-airport-delays': {
     reason: 'Read-only cache-backed airport delay listing; availability-first fallback is acceptable.',
+  },
+  '/api/intelligence/v1/list-material-events': {
+    reason: 'Read-only Redis read of the seeded 8-K stream; no upstream fetch on miss, so availability-first fallback carries no spend risk.',
   },
 };
 

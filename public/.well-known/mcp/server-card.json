@@ -209,6 +209,10 @@
       "description": "Historical precedents for a situation you describe, drawn from WorldMonitor's accumulating event store (Pro). Same vector search as search_intel_history over a longer input: a sentence or two of context ranks better than a keyword. Optional domain and country narrow the candidates. The store holds only what the conflict, military, and energy seeders have published since capture was activated, so an empty precedent list is weak evidence of a novel situation, not proof of one. The route embeds your text on every call and is rate-limited fail-closed."
     },
     {
+      "name": "get_company_intelligence",
+      "description": "Per-company corporate intelligence from SEC EDGAR and market data. Views: enrichment (SEC identity, recent filings, market profile, earnings surprises, news mentions), signals (classified 8-K material events + news), filings-search (EDGAR full-text search with form/date filters), material-events (market-wide stream of recent material 8-K filings). Company identity resolves through the SEC ticker registry — unresolvable companies return empty envelopes, never guessed attribution."
+    },
+    {
       "name": "describe_tool",
       "description": "Return the full uncompressed definition of one tool by name. Use when the compressed tools/list entry is ambiguous about behaviour or argument semantics."
     },

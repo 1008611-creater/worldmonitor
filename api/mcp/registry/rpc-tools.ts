@@ -16,6 +16,7 @@ import { evaluateFreshness } from '../freshness';
 import type { FreshnessCheck, ToolDef } from '../types';
 import { COUNTRY_BRIEF_UI_URI, COUNTRY_RISK_UI_URI, WORLD_BRIEF_UI_URI } from '../ui/registry';
 import { buildPublicTool, TOOL_REGISTRY } from './index';
+import { COMPANY_INTEL_TOOL } from './company-intel-tools';
 
 type McpBriefSource = {
   title: string;
@@ -204,7 +205,6 @@ const INTEL_HISTORY_DOMAINS = ['conflict', 'military', 'energy'];
 const MCP_HISTORY_SEARCH_MAX_LIMIT = 16;
 const MCP_HISTORY_TIMELINE_MAX_LIMIT = 40;
 const MCP_HISTORY_PRECEDENT_MAX_LIMIT = 8;
-
 /**
  * Copy a numeric filter onto the query string. Absent and non-numeric values
  * are dropped; every finite number — including 0 and negatives — is forwarded
@@ -1522,6 +1522,7 @@ export const RPC_TOOLS: ToolDef[] = [
       'POST /api/intelligence/v1/get-similar-events',
     ],
   },
+  COMPANY_INTEL_TOOL,
   {
     // describe_tool (v1.5.0) — on-demand escape hatch for the full
     // uncompressed tool definition. tools/list (default) emits each tool's

@@ -280,18 +280,27 @@ export interface TelegramMessage {
 }
 
 export interface GetCompanyEnrichmentRequest {
+  /** @deprecated */
   domain: string;
   name: string;
+  ticker: string;
 }
 
 export interface GetCompanyEnrichmentResponse {
   company?: EnrichedCompany;
+  /** @deprecated */
   github?: EnrichedGithub;
+  /** @deprecated */
   techStack: TechStackItem[];
   secFilings?: SecFilings;
+  /** @deprecated */
   hackerNewsMentions: HNMention[];
   enrichedAtMs: number;
   sources: string[];
+  market?: CompanyMarketProfile;
+  earningsSurprises: EarningsSurprise[];
+  newsMentions: CompanyNewsMention[];
+  unavailable: boolean;
 }
 
 export interface EnrichedCompany {
@@ -300,7 +309,10 @@ export interface EnrichedCompany {
   description: string;
   location: string;
   website: string;
+  /** @deprecated */
   founded: number;
+  cik: string;
+  ticker: string;
 }
 
 export interface EnrichedGithub {
@@ -324,6 +336,8 @@ export interface SecFiling {
   form: string;
   fileDate: string;
   description: string;
+  url: string;
+  items: string[];
 }
 
 export interface HNMention {
@@ -334,17 +348,49 @@ export interface HNMention {
   createdAtMs: number;
 }
 
+export interface CompanyMarketProfile {
+  exchange: string;
+  industry: string;
+  marketCapMusd: number;
+  ipoDate: string;
+  logoUrl: string;
+  country: string;
+  currency: string;
+}
+
+export interface EarningsSurprise {
+  period: string;
+  actualEps: number;
+  estimateEps: number;
+  surprise: number;
+  surprisePercent: number;
+  year: number;
+  quarter: number;
+}
+
+export interface CompanyNewsMention {
+  title: string;
+  url: string;
+  source: string;
+  publishedAtMs: number;
+}
+
 export interface ListCompanySignalsRequest {
   company: string;
+  /** @deprecated */
   domain: string;
+  ticker: string;
 }
 
 export interface ListCompanySignalsResponse {
   company: string;
+  /** @deprecated */
   domain: string;
   signals: CompanySignal[];
   summary?: SignalSummary;
   discoveredAtMs: number;
+  cik: string;
+  unavailable: boolean;
 }
 
 export interface CompanySignal {
@@ -371,6 +417,57 @@ export interface SignalSummary {
   byType: Record<string, number>;
   strongestSignal?: CompanySignal;
   signalDiversity: number;
+}
+
+export interface SearchSecFilingsRequest {
+  query: string;
+  forms: string;
+  startDate: string;
+  endDate: string;
+  limit: number;
+}
+
+export interface SearchSecFilingsResponse {
+  results: SecFilingSearchResult[];
+  total: number;
+  unavailable: boolean;
+  fetchedAtMs: number;
+}
+
+export interface SecFilingSearchResult {
+  company: string;
+  cik: string;
+  form: string;
+  fileDate: string;
+  items: string[];
+  url: string;
+  accession: string;
+}
+
+export interface ListMaterialEventsRequest {
+  itemCode: string;
+  limit: number;
+}
+
+export interface ListMaterialEventsResponse {
+  events: MaterialEvent[];
+  unavailable: boolean;
+  fetchedAtMs: number;
+}
+
+export interface MaterialEvent {
+  company: string;
+  cik: string;
+  form: string;
+  accession: string;
+  filedAtMs: number;
+  items: MaterialEventItem[];
+  url: string;
+}
+
+export interface MaterialEventItem {
+  code: string;
+  description: string;
 }
 
 export interface GetCountryFactsRequest {
@@ -1011,6 +1108,8 @@ export interface IntelligenceServiceHandler {
   listTelegramFeed(ctx: ServerContext, req: ListTelegramFeedRequest): Promise<ListTelegramFeedResponse>;
   getCompanyEnrichment(ctx: ServerContext, req: GetCompanyEnrichmentRequest): Promise<GetCompanyEnrichmentResponse>;
   listCompanySignals(ctx: ServerContext, req: ListCompanySignalsRequest): Promise<ListCompanySignalsResponse>;
+  searchSecFilings(ctx: ServerContext, req: SearchSecFilingsRequest): Promise<SearchSecFilingsResponse>;
+  listMaterialEvents(ctx: ServerContext, req: ListMaterialEventsRequest): Promise<ListMaterialEventsResponse>;
   getCountryFacts(ctx: ServerContext, req: GetCountryFactsRequest): Promise<GetCountryFactsResponse>;
   listSecurityAdvisories(ctx: ServerContext, req: ListSecurityAdvisoriesRequest): Promise<ListSecurityAdvisoriesResponse>;
   getGdeltTopicTimeline(ctx: ServerContext, req: GetGdeltTopicTimelineRequest): Promise<GetGdeltTopicTimelineResponse>;
@@ -1568,6 +1667,7 @@ export function createIntelligenceServiceRoutes(
           const body: GetCompanyEnrichmentRequest = {
             domain: params.get("domain") ?? "",
             name: params.get("name") ?? "",
+            ticker: params.get("ticker") ?? "",
           };
           if (options?.validateRequest) {
             const bodyViolations = options.validateRequest("getCompanyEnrichment", body);
@@ -1616,6 +1716,7 @@ export function createIntelligenceServiceRoutes(
           const body: ListCompanySignalsRequest = {
             company: params.get("company") ?? "",
             domain: params.get("domain") ?? "",
+            ticker: params.get("ticker") ?? "",
           };
           if (options?.validateRequest) {
             const bodyViolations = options.validateRequest("listCompanySignals", body);
@@ -1632,6 +1733,105 @@ export function createIntelligenceServiceRoutes(
 
           const result = await handler.listCompanySignals(ctx, body);
           return new Response(JSON.stringify(result as ListCompanySignalsResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/intelligence/v1/search-sec-filings",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: SearchSecFilingsRequest = {
+            query: params.get("query") ?? "",
+            forms: params.get("forms") ?? "",
+            startDate: params.get("start_date") ?? "",
+            endDate: params.get("end_date") ?? "",
+            limit: Number(params.get("limit") ?? "0"),
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("searchSecFilings", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.searchSecFilings(ctx, body);
+          return new Response(JSON.stringify(result as SearchSecFilingsResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/intelligence/v1/list-material-events",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: ListMaterialEventsRequest = {
+            itemCode: params.get("item_code") ?? "",
+            limit: Number(params.get("limit") ?? "0"),
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("listMaterialEvents", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.listMaterialEvents(ctx, body);
+          return new Response(JSON.stringify(result as ListMaterialEventsResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
