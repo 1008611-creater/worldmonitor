@@ -22,14 +22,29 @@ describe('cross-Strait activity production registration (#5575)', () => {
     assert.equal(BOOTSTRAP_TIERS.crossStraitActivity, 'slow');
     assert.match(
       read('scripts/seed-bundle-derived-signals.mjs'),
-      /label:\s*'Cross-Strait-Activity'[\s\S]*?seed-cross-strait-activity\.mjs[\s\S]*?requiredEnv:\s*\['PROXY_URL'\]/,
+      // any-of group: the adapter resolves JAPAN_MOD_PROXY_URL || PROXY_URL, so
+      // the bundle gate must accept either. Gating on the source-specific name
+      // alone hard-failed the section in an environment carrying only the
+      // shared exit, even though the seeder would have run undegraded.
+      /label:\s*'Cross-Strait-Activity'[\s\S]*?seed-cross-strait-activity\.mjs[\s\S]*?requiredEnv:\s*\[\['JAPAN_MOD_PROXY_URL',\s*'PROXY_URL'\]\]/,
     );
     const railwayServices = JSON.parse(
       read('scripts/railway-services.json'),
-    ) as Array<{ service: string; requiredEnv?: string[] }>;
+    ) as Array<{ service: string; requiredEnv?: (string | string[])[] }>;
     assert.deepEqual(
       railwayServices.find((entry) => entry.service === 'seed-bundle-derived-signals')?.requiredEnv,
-      ['PROXY_URL'],
+      // Any-of, matching the bundle gate above and the adapter's
+      // `JAPAN_MOD_PROXY_URL || PROXY_URL`. Unlike market-backup and
+      // conflict-intel, NO member of this bundle reaches a bare
+      // resolveProxy/PROXY_URL, so neither variable is mandatory on its own --
+      // the service just needs one routable exit. Declared flat as
+      // ['JAPAN_MOD_PROXY_URL'] the audit failed a production environment
+      // carrying only the shared exit, which the seeder runs on undegraded.
+      [['JAPAN_MOD_PROXY_URL', 'PROXY_URL']],
+    );
+    assert.match(
+      read('scripts/cross-strait-activity/adapters.mjs'),
+      /proxyUrl = process\.env\.JAPAN_MOD_PROXY_URL \|\| process\.env\.PROXY_URL \|\| ''/,
     );
     assert.match(
       read('scripts/china-coverage-manifest.mjs'),
