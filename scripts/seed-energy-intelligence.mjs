@@ -2,6 +2,7 @@
 
 import { loadEnvFile, CHROME_UA, runSeed, httpsProxyFetchRaw } from './_seed-utils.mjs';
 import { resolveProxyStringConnect } from './_proxy-utils.cjs';
+import { decodeHtmlEntities } from './_html-entities.mjs';
 import { makeSeedHistoryAfterPublish } from './_seed-history.mjs';
 
 loadEnvFile(import.meta.url);
@@ -30,23 +31,6 @@ export function stableHash(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
   return Math.abs(h).toString(36);
-}
-
-function decodeHtmlEntities(text) {
-  return text
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;|&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&hellip;/g, '…')
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–')
-    .replace(/&lsquo;|&rsquo;/g, "'")
-    .replace(/&ldquo;|&rdquo;/g, '"');
 }
 
 function extractTag(block, tagName) {

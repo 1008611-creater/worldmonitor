@@ -5930,10 +5930,12 @@ function _redditEpochSeconds(v) {
 // The Reddit hosts pass raw_json=1, which un-escapes &amp; &lt; &gt; in text
 // fields. A vendor response may still be HTML-escaped, so decode the few entities
 // Reddit emits to keep panel titles identical across paths.
+// &amp; must be replaced LAST: this set has no numeric refs whose output could
+// re-form an entity, so amp-last decodes exactly one level (&amp;lt; stays &lt;).
 function _decodeRedditEntities(s) {
   if (typeof s !== 'string') return s;
-  return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 }
 
 // Normalize a ScrapeCreators post so its shape matches the OAuth/public paths

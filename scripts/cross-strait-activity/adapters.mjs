@@ -1130,9 +1130,13 @@ function decodeHtml(value) {
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => decodeNumericEntity(hex, 16))
     .replace(/&#(\d+);/g, (_, digits) => decodeNumericEntity(digits, 10))
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
+    // &amp; must decode LAST so one pass decodes exactly one level
+    // (`&amp;quot;` stays the literal text `&quot;`). Accepted residual,
+    // same as PR #5432: `&#38;quot;` still double-decodes because numerics
+    // run before the named entities.
+    .replace(/&amp;/gi, '&')
     .replace(/\r/g, '')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s+/g, '\n')
