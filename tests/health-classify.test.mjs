@@ -128,6 +128,25 @@ test('classifyKey: socialVelocity error seed-meta → SEED_ERROR while data is p
   assert.equal(entry.records, 1);
 });
 
+test('classifyKey: gdelt timeline repair metadata → SEED_ERROR while canonical articles remain available', () => {
+  const entry = classifyKey('gdeltIntel', BOOTSTRAP_KEYS.gdeltIntel, { allowOnDemand: false },
+    makeCtx({
+      strens: { [BOOTSTRAP_KEYS.gdeltIntel]: 4096 },
+      metaValues: {
+        'seed-meta:intelligence:gdelt-intel': seedMeta({
+          recordCount: 6,
+          status: 'error',
+          errorReason: 'timeline_keys_missing_or_unconfirmed',
+          missingTimelineKeys: ['gdelt:intel:vol:military'],
+        }),
+      },
+    }));
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
+  assert.equal(entry.records, 1,
+    'SEED_ERROR preserves the canonical data-presence signal while surfacing the timeline outage');
+});
+
 test('classifyKey: degraded source with a non-positive or invalid fetchedAt exposes unknown age', () => {
   const name = 'crossStraitActivityJapanMod';
   const dataKey = STANDALONE_KEYS[name];
