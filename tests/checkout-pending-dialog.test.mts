@@ -98,10 +98,15 @@ function installBrowserGlobals(): void {
       globalThis.__pendingDialogHarness.fetchBodies.push(body);
       // With the override flag the backend skips the pending guard -> 200 + url.
       if (body && body.bypassPendingGuard === true) {
+        // Both json() and text() are modelled: a real Response exposes both,
+        // and the success path reads text() so a non-JSON 200 cannot throw an
+        // engine-specific DOMException (WORLDMONITOR-XV).
         return {
           ok: true,
           status: 200,
           json: async () => ({ checkout_url: BYPASS_URL }),
+          text: async () => JSON.stringify({ checkout_url: BYPASS_URL }),
+          headers: { get: () => null },
         };
       }
       // Otherwise the guard fires: a 409 PAYMENT_IN_PROGRESS block.
