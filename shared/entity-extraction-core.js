@@ -81,8 +81,7 @@ export function getEntityIndex() {
   return cachedIndex;
 }
 
-export function lookupEntityByAlias(alias) {
-  const index = getEntityIndex();
+export function lookupEntityByAlias(alias, index = getEntityIndex()) {
   const id = index.byAlias.get(alias.toLowerCase());
   return id ? index.byId.get(id) : undefined;
 }
@@ -94,24 +93,20 @@ function resolveEntitiesById(index, ids) {
     .filter(entity => entity !== undefined);
 }
 
-export function lookupEntitiesByKeyword(keyword) {
-  const index = getEntityIndex();
+export function lookupEntitiesByKeyword(keyword, index = getEntityIndex()) {
   return resolveEntitiesById(index, index.byKeyword.get(keyword.toLowerCase()));
 }
 
-export function lookupEntitiesBySector(sector) {
-  const index = getEntityIndex();
+export function lookupEntitiesBySector(sector, index = getEntityIndex()) {
   return resolveEntitiesById(index, index.bySector.get(sector.toLowerCase()));
 }
 
-export function findRelatedEntities(entityId) {
-  const index = getEntityIndex();
+export function findRelatedEntities(entityId, index = getEntityIndex()) {
   const entity = index.byId.get(entityId);
   return resolveEntitiesById(index, entity?.related);
 }
 
-export function findEntitiesInText(text) {
-  const index = getEntityIndex();
+export function findEntitiesInText(text, index = getEntityIndex()) {
   const matches = [];
   const seen = new Set();
   const textLower = text.toLowerCase();
@@ -156,20 +151,71 @@ export function findEntitiesInText(text) {
   return matches.sort((a, b) => b.confidence - a.confidence || a.position - b.position);
 }
 
-export function getEntityDisplayName(entityId) {
-  const index = getEntityIndex();
+export function getEntityDisplayName(entityId, index = getEntityIndex()) {
   const entity = index.byId.get(entityId);
   return entity?.name ?? entityId;
 }
 
-export function extractEntitiesFromTitle(title) {
-  const matches = findEntitiesInText(title);
+export function extractEntitiesFromTitle(title, index = getEntityIndex()) {
+  const matches = findEntitiesInText(title, index);
 
   return matches.map(match => ({
     entityId: match.entityId,
-    name: getEntityDisplayName(match.entityId),
+    name: getEntityDisplayName(match.entityId, index),
     matchedText: match.matchedText,
     matchType: match.matchType,
     confidence: match.confidence,
   }));
+}
+
+export function extractEntityContext(cluster, index = getEntityIndex()) {
+  const primaryEntities = extractEntitiesFromTitle(cluster.primaryTitle, index);
+  const entityMap = new Map();
+
+  for (const entity of primaryEntities) {
+    if (!entityMap.has(entity.entityId)) {
+      entityMap.set(entity.entityId, entity);
+    }
+  }
+
+  if (cluster.allItems && cluster.allItems.length > 1) {
+    for (const item of cluster.allItems.slice(0, 5)) {
+      if (item.title === cluster.primaryTitle) continue;
+      const itemEntities = extractEntitiesFromTitle(item.title, index);
+      for (const entity of itemEntities) {
+        if (!entityMap.has(entity.entityId)) {
+          entityMap.set(entity.entityId, {
+            ...entity,
+            confidence: entity.confidence * 0.9,
+          });
+        }
+      }
+    }
+  }
+
+  const entities = Array.from(entityMap.values())
+    .sort((a, b) => b.confidence - a.confidence);
+  const relatedEntityIds = new Set();
+
+  for (const entity of entities) {
+    for (const related of findRelatedEntities(entity.entityId, index)) {
+      relatedEntityIds.add(related.id);
+    }
+  }
+
+  return {
+    clusterId: cluster.id,
+    title: cluster.primaryTitle,
+    entities,
+    primaryEntity: entities[0]?.entityId,
+    relatedEntityIds: Array.from(relatedEntityIds),
+  };
+}
+
+export function extractEntityContexts(clusters, index = getEntityIndex()) {
+  const contexts = new Map();
+  for (const cluster of clusters) {
+    contexts.set(cluster.id, extractEntityContext(cluster, index));
+  }
+  return contexts;
 }

@@ -80,8 +80,10 @@ test('public signal docs keep their listed signal count in sync with the SignalT
 });
 
 test('public signal docs stay aligned with hotspot escalation math', () => {
-  const hotspotCode = readRepo('src/services/hotspot-escalation.ts');
-  const geoCode = readRepo('src/config/geo.ts');
+  // Escalation math and the curated hotspot dataset moved to the shared
+  // client/server modules in #5696; the src/ files are re-export shims.
+  const hotspotCode = readRepo('shared/analysis-hotspot-escalation.ts');
+  const geoCode = readRepo('shared/geo-data.ts');
   const hotspotsDoc = readRepo('docs/hotspots.mdx');
   const algorithmsDoc = readRepo('docs/algorithms.mdx');
   const hotspotBaselines = extractHotspotBaselines(geoCode);
@@ -191,7 +193,9 @@ test('public Escalation Monitor docs publish the current adapter weights and gat
 });
 
 test('public algorithms docs publish current temporal anomaly severities', () => {
-  const temporalCode = readRepo('server/worldmonitor/infrastructure/v1/_shared.ts');
+  // Thresholds moved to the shared client/server module in #5696; the server
+  // _shared.ts re-exports them, so this remains the single source of truth.
+  const temporalCode = readRepo('shared/analysis-temporal-severity.ts');
   const algorithmsDoc = readRepo('docs/algorithms.mdx');
 
   assert.match(temporalCode, /export const Z_THRESHOLD_LOW = 1\.5;/);

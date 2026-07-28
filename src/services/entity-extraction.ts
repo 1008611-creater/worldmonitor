@@ -1,81 +1,29 @@
 import type { ClusteredEventCore } from './analysis-core';
 import {
   getEntityIndex,
-  findRelatedEntities,
   getEntityDisplayName,
 } from './entity-index';
-// extractEntitiesFromTitle moved to shared/entity-extraction-core.js (issue
-// #5697) so server-side MCP tools share the exact extraction; re-exported
-// here unchanged for existing client imports.
-import { extractEntitiesFromTitle } from '../../shared/entity-extraction-core.js';
+import {
+  extractEntitiesFromTitle,
+  extractEntityContext,
+  extractEntityContexts,
+  type NewsEntityContext,
+} from '../../shared/entity-extraction-core.js';
 
-export type { ExtractedEntity } from '../../shared/entity-extraction-core.js';
+export type {
+  ExtractedEntity,
+  NewsEntityContext,
+} from '../../shared/entity-extraction-core.js';
 export { extractEntitiesFromTitle };
-import type { ExtractedEntity } from '../../shared/entity-extraction-core.js';
-
-export interface NewsEntityContext {
-  clusterId: string;
-  title: string;
-  entities: ExtractedEntity[];
-  primaryEntity?: string;
-  relatedEntityIds: string[];
-}
 
 export function extractEntitiesFromCluster(cluster: ClusteredEventCore): NewsEntityContext {
-  const primaryEntities = extractEntitiesFromTitle(cluster.primaryTitle);
-  const entityMap = new Map<string, ExtractedEntity>();
-
-  for (const entity of primaryEntities) {
-    if (!entityMap.has(entity.entityId)) {
-      entityMap.set(entity.entityId, entity);
-    }
-  }
-
-  if (cluster.allItems && cluster.allItems.length > 1) {
-    for (const item of cluster.allItems.slice(0, 5)) {
-      const itemEntities = extractEntitiesFromTitle(item.title);
-      for (const entity of itemEntities) {
-        if (!entityMap.has(entity.entityId)) {
-          entity.confidence *= 0.9;
-          entityMap.set(entity.entityId, entity);
-        }
-      }
-    }
-  }
-
-  const entities = Array.from(entityMap.values())
-    .sort((a, b) => b.confidence - a.confidence);
-
-  const primaryEntity = entities[0]?.entityId;
-
-  const relatedEntityIds = new Set<string>();
-  for (const entity of entities) {
-    const related = findRelatedEntities(entity.entityId);
-    for (const rel of related) {
-      relatedEntityIds.add(rel.id);
-    }
-  }
-
-  return {
-    clusterId: cluster.id,
-    title: cluster.primaryTitle,
-    entities,
-    primaryEntity,
-    relatedEntityIds: Array.from(relatedEntityIds),
-  };
+  return extractEntityContext(cluster);
 }
 
 export function extractEntitiesFromClusters(
   clusters: ClusteredEventCore[]
 ): Map<string, NewsEntityContext> {
-  const contextMap = new Map<string, NewsEntityContext>();
-
-  for (const cluster of clusters) {
-    const context = extractEntitiesFromCluster(cluster);
-    contextMap.set(cluster.id, context);
-  }
-
-  return contextMap;
+  return extractEntityContexts(clusters);
 }
 
 export function findNewsForEntity(

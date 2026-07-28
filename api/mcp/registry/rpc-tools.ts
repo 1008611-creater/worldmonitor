@@ -6,7 +6,6 @@ import {
 } from '../../../shared/china-decision-signals';
 // @ts-expect-error — generated JS module, no declaration file
 import MINING_SITES_RAW from '../../../shared/mining-sites.js';
-// @ts-expect-error — JS module, no declaration file
 import { readJsonFromUpstash } from '../../_upstash-json.js';
 import { buildAuthHeaders } from '../auth';
 import { assertToolFetchOk, BillingDenialError, throwIfBillingDenial } from '../billing-denial';
@@ -15,6 +14,7 @@ import { assertMcpToolFetchOk } from '../downstream';
 import { evaluateFreshness } from '../freshness';
 import type { FreshnessCheck, ToolDef } from '../types';
 import { COUNTRY_BRIEF_UI_URI, COUNTRY_RISK_UI_URI, WORLD_BRIEF_UI_URI } from '../ui/registry';
+import { ANALYSIS_TOOLS } from './analysis-tools';
 import { buildPublicTool, TOOL_REGISTRY } from './index';
 import { COMPANY_INTEL_TOOL } from './company-intel-tools';
 
@@ -1364,6 +1364,7 @@ export const RPC_TOOLS: ToolDef[] = [
     },
     _apiPaths: [],
   },
+  ...ANALYSIS_TOOLS,
   {
     name: 'search_intel_history',
     // 16 full records fit this tool's 128 KiB output ceiling with headroom.
