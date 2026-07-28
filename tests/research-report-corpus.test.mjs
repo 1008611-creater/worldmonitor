@@ -292,8 +292,46 @@ describe('research report corpus (#5668)', () => {
     };
     assert.throws(
       () => computeReportMetrics(truncated, report),
-      /No rows for metric/,
+      /incomplete daily coverage/,
       'a snapshot missing the observation window must fail the build, not render empties',
+    );
+  });
+
+  it('fails closed when any published series has an interior calendar gap', () => {
+    const missingDate = '2026-06-15';
+    const publishedSeriesIds = [
+      report.focusChokepointId,
+      report.contextChokepointIds[0],
+    ];
+
+    for (const id of publishedSeriesIds) {
+      const incomplete = structuredClone(snapshot);
+      const series = incomplete.chokepoints[id];
+      series.history = series.history.filter((row) => row.date !== missingDate);
+      series.rowCount = series.history.length;
+
+      assert.throws(
+        () => computeReportMetrics(incomplete, report),
+        new RegExp(`${id}.*incomplete daily coverage.*${missingDate}`, 'i'),
+        `${id}: a missing interior day must fail the report build even when metadata omits the gap`,
+      );
+    }
+  });
+
+  it('fails closed when a published series contains an impossible calendar date', () => {
+    const invalidDate = '2026-02-30';
+    const invalid = structuredClone(snapshot);
+    const series = invalid.chokepoints[report.focusChokepointId];
+    const insertionIndex = series.history.findIndex((row) => row.date === '2026-03-01');
+    series.history.splice(insertionIndex, 0, {
+      ...series.history[insertionIndex - 1],
+      date: invalidDate,
+    });
+    series.rowCount = series.history.length;
+
+    assert.throws(
+      () => computeReportMetrics(invalid, report),
+      new RegExp(`${report.focusChokepointId}.*invalid observation date.*${invalidDate}`, 'i'),
     );
   });
 
