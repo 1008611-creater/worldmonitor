@@ -14,6 +14,8 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { writeResearchSection } from './build-research-reports.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_ROOT = resolve(__dirname, '..');
@@ -28,10 +30,11 @@ const CHANGELOG_PATH = 'CHANGELOG.md';
 const LIVE_TOOLS_SCRIPT_PATH = 'scripts/crawlable-live-tools.mjs';
 const COUNTRY_BBOXES_PATH = 'shared/country-bboxes.js';
 const CRISIS_REGISTRY_PATH = 'shared/crawlable-crises.json';
+const RESEARCH_REPORTS_INDEX_PATH = 'shared/research-reports/index.mjs';
 // Last substantive change to the shared HTML template/content language. Data
 // families take the later of this version and their own committed source date,
 // so template changes are reflected without pretending every deploy is fresh.
-export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-07-24';
+export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-07-27';
 const CHANGELOG_PAGE_SIZE = 2;
 const MAX_TOOL_LATITUDE_SPAN = 45;
 const MAX_TOOL_LONGITUDE_SPAN = 60;
@@ -155,6 +158,7 @@ const GENERATED_DIRS = [
   'crises',
   'tools',
   'reference/changelog',
+  'research',
 ];
 
 const MONTHS = [
@@ -526,12 +530,34 @@ function latestDatedChangelogRelease(changelog) {
   return dates[dates.length - 1] || null;
 }
 
+// Git's local env vars (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) override
+// `cwd`, so a build running inside a git hook would silently resolve these
+// queries against the hook's repository instead of the rootDir it was given.
+// Strip them, and render dates in UTC (see gitFileLastmod).
+let gitLocalEnvVars = null;
+function gitEnvForRoot() {
+  if (gitLocalEnvVars === null) {
+    try {
+      gitLocalEnvVars = execFileSync('git', ['rev-parse', '--local-env-vars'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim().split('\n');
+    } catch {
+      gitLocalEnvVars = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY'];
+    }
+  }
+  const env = { ...process.env, TZ: 'UTC' };
+  for (const name of gitLocalEnvVars) delete env[name];
+  return env;
+}
+
 function hasCompleteGitHistory(rootDir) {
   try {
     return execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
       cwd: rootDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: gitEnvForRoot(),
     }).trim() === 'false';
   } catch {
     return false;
@@ -541,11 +567,19 @@ function hasCompleteGitHistory(rootDir) {
 export function gitFileLastmod(rootDir, relativePath) {
   if (!hasCompleteGitHistory(rootDir)) return null;
   try {
-    const out = execFileSync('git', ['log', '-1', '--format=%cs', '--', relativePath], {
-      cwd: rootDir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    // Committer date rendered in UTC, not the commit's recorded timezone —
+    // a +04:00 evening commit would otherwise date as "tomorrow" against a
+    // UTC build clock and trip build-sitemap's future-lastmod guard.
+    const out = execFileSync(
+      'git',
+      ['log', '-1', '--date=format-local:%Y-%m-%d', '--format=%cd', '--', relativePath],
+      {
+        cwd: rootDir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: gitEnvForRoot(),
+      },
+    ).trim();
     return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null;
   } catch {
     return null;
@@ -560,12 +594,18 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
     { TRADE_ROUTES },
     { GLOSSARY_TERMS },
     { default: countryBboxes },
+    { RESEARCH_REPORTS },
   ] = await Promise.all([
     importRepoModule(rootDir, CHOKEPOINT_REGISTRY_PATH),
     importRepoModule(rootDir, TRADE_ROUTES_PATH),
     importRepoModule(rootDir, GLOSSARY_DATA_PATH),
     importRepoModule(rootDir, COUNTRY_BBOXES_PATH),
+    importRepoModule(rootDir, RESEARCH_REPORTS_INDEX_PATH),
   ]);
+  const researchReports = RESEARCH_REPORTS.map((report) => ({
+    report,
+    snapshot: readJson(rootDir, report.snapshotPath),
+  }));
   const countries = normalizeCountries(resilience, reverseNames);
   const countryBounds = normalizeCountryBounds(countryBboxes, countries, reverseNames);
   const crises = normalizeCrises(readJson(rootDir, CRISIS_REGISTRY_PATH));
@@ -601,6 +641,10 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
     gitFileLastmod(rootDir, CRISIS_REGISTRY_PATH),
     CORPUS_GENERATOR_CONTENT_VERSION,
   );
+  const researchLastmod = laterDate(
+    ...researchReports.map(({ report }) => report.dateModified),
+    CORPUS_GENERATOR_CONTENT_VERSION,
+  );
 
   return {
     generatorContentVersion: CORPUS_GENERATOR_CONTENT_VERSION,
@@ -614,6 +658,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
       liveToolsScript: LIVE_TOOLS_SCRIPT_PATH,
       countryBboxes: COUNTRY_BBOXES_PATH,
       crisisRegistry: CRISIS_REGISTRY_PATH,
+      researchReports: RESEARCH_REPORTS_INDEX_PATH,
     },
     lastmod: {
       countries: countriesLastmod,
@@ -621,6 +666,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
       chokepoints: chokepointsLastmod,
       tools: toolsLastmod,
       crises: crisesLastmod,
+      research: researchLastmod,
     },
     resilience,
     countries,
@@ -630,6 +676,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
     tradeRoutesById,
     glossaryTerms,
     changelog,
+    researchReports,
   };
 }
 
@@ -657,6 +704,8 @@ function pageDocument({
   breadcrumbs,
   body,
   scriptSrcs = [],
+  ogImage = OG_IMAGE_PATH,
+  ogImageAlt = OG_IMAGE_ALT,
 }) {
   const canonical = absoluteUrl(baseUrl, path);
   const ld = [jsonLd, breadcrumbs].filter(Boolean);
@@ -676,15 +725,15 @@ function pageDocument({
     <meta property="og:description" content="${escapeHtml(description)}">
     <meta property="og:url" content="${escapeHtml(canonical)}">
     <meta property="og:site_name" content="World Monitor">
-    <meta property="og:image" content="${escapeHtml(absoluteUrl(baseUrl, OG_IMAGE_PATH))}">
+    <meta property="og:image" content="${escapeHtml(absoluteUrl(baseUrl, ogImage))}">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="${escapeHtml(OG_IMAGE_ALT)}">
+    <meta property="og:image:alt" content="${escapeHtml(ogImageAlt)}">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="${escapeHtml(title)}">
     <meta name="twitter:description" content="${escapeHtml(description)}">
-    <meta name="twitter:image" content="${escapeHtml(absoluteUrl(baseUrl, OG_IMAGE_PATH))}">
-    <meta name="twitter:image:alt" content="${escapeHtml(OG_IMAGE_ALT)}">
+    <meta name="twitter:image" content="${escapeHtml(absoluteUrl(baseUrl, ogImage))}">
+    <meta name="twitter:image:alt" content="${escapeHtml(ogImageAlt)}">
     <meta name="twitter:site" content="@worldmonitorai">
     ${ld.map((entry) => `<script type="application/ld+json">${escapeJsonScript(entry)}</script>`).join('\n    ')}
     <style>
@@ -738,6 +787,15 @@ function pageDocument({
       .related { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 0 20px; }
       .related a { display: inline-flex; align-items: center; min-height: 44px; }
       .source { margin-top: 34px; font-size: 13px; color: var(--muted); }
+      table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 14px; }
+      caption { caption-side: top; text-align: left; color: var(--muted); font-size: 13px; padding-bottom: 8px; }
+      th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; background: var(--panel); }
+      td data { color: var(--text); }
+      figure { margin: 20px 0 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+      figcaption { margin-top: 10px; color: var(--muted); font-size: 13px; }
+      blockquote { margin: 16px 0 0; padding: 12px 16px; border-left: 2px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; }
+      blockquote p { margin: 0; color: var(--text); font-size: 14px; }
       footer { border-top: 1px solid var(--line); padding-top: 20px; padding-bottom: 28px; color: var(--muted); font-size: 13px; }
     </style>
   </head>
@@ -749,6 +807,7 @@ function pageDocument({
         <a href="/chokepoints/">Chokepoints</a>
         <a href="/crises/">Crises</a>
         <a href="/tools/">Live tools</a>
+        <a href="/research/">Research</a>
         <a href="/reference/changelog/">Changelog</a>
         <a href="/blog/glossary/">Glossary</a>
       </nav>
@@ -929,7 +988,7 @@ ${chokepoints.map((cp) => {
   });
 }
 
-function renderChokepointPage({ chokepoint, baseUrl, lastmod, tradeRoutesById }) {
+function renderChokepointPage({ chokepoint, baseUrl, lastmod, tradeRoutesById, researchReports = [] }) {
   const path = `/chokepoints/${chokepoint.slug}/`;
   const content = CHOKEPOINT_CONTENT[chokepoint.id] || {};
   const blurb = content.blurb
@@ -959,6 +1018,11 @@ ${routes.map((route) => {
   ].filter(Boolean).join('\n');
 
   const relatedItems = [];
+  for (const { report } of researchReports) {
+    if (report.focusChokepointId === chokepoint.id) {
+      relatedItems.push(`<a href="/research/${report.slug}/">${escapeHtml(report.title)}</a>`);
+    }
+  }
   if (content.glossarySlug) {
     relatedItems.push(`<a href="/blog/glossary/${content.glossarySlug}/">${escapeHtml(chokepoint.displayName)} in the glossary</a>`);
   }
@@ -1416,6 +1480,7 @@ function buildManifest({ data, baseUrl, changelogPageCount }) {
   ];
   const changelogRoutes = Array.from({ length: changelogPageCount }, (_, index) => changelogPagePath(index));
   const glossaryRoutes = data.glossaryTerms.map((term) => `/blog/glossary/${term.slug}/`);
+  const researchRoutes = data.researchReports.map(({ report }) => `/research/${report.slug}/`);
   return {
     schemaVersion: 1,
     baseUrl: normalizeBaseUrl(baseUrl),
@@ -1448,6 +1513,11 @@ function buildManifest({ data, baseUrl, changelogPageCount }) {
         index: '/reference/changelog/',
         routes: changelogRoutes,
         sourceLastmod: data.lastmod.changelog,
+      },
+      research: {
+        count: researchRoutes.length,
+        index: '/research/',
+        routes: researchRoutes,
       },
       glossary: {
         count: glossaryRoutes.length,
@@ -1516,9 +1586,17 @@ export async function buildCorpus({
         baseUrl,
         lastmod: data.lastmod.chokepoints,
         tradeRoutesById: data.tradeRoutesById,
+        researchReports: data.researchReports,
       }),
     );
   }
+
+  writeResearchSection({
+    data,
+    outDir,
+    baseUrl,
+    tpl: { escapeHtml, absoluteUrl, breadcrumbLd, withUtmSource, pageDocument },
+  });
 
   writeGeneratedFile(
     outDir,
@@ -1635,6 +1713,7 @@ async function main() {
     + `${manifest.sections.chokepoints.count} chokepoints, `
     + `${manifest.sections.crises.count} crisis trackers, `
     + `${manifest.sections.tools.count} live tools, `
+    + `${manifest.sections.research.count} research reports, `
     + `${manifest.sections.changelog.count} changelog pages. `
     + `Glossary manifest references ${manifest.sections.glossary.count} existing blog pages.\n`,
   );
