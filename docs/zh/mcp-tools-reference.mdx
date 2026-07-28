@@ -663,6 +663,126 @@ curl -s https://worldmonitor.app/mcp \
 
 </CodeGroup>
 
+### `classify_event`
+
+通过枚举校验的 WorldMonitor 事件分类器，将提供的新闻标题或短文本分类为威胁类别和严重性。分类器为 temperature-0、按标题缓存 24 小时，且只会返回固定类别/级别枚举中的值 —— 绝不返回自由格式的 LLM 输出。无法产生枚举有效结果时 `classification` 为 `null`。
+
+**参数（工具专用）：**
+
+| 名称 | 类型 | 描述 |
+|------|------|------|
+| `text` | string（必填） | 待分类的标题或短摘录，1-500 字符。超长输入会返回 `error` 而不是被截断。 |
+
+- **API 端点：** `GET /api/intelligence/v1/classify-event`
+- **类型：** 对 LLM 分类器的受约束规范路由代理。该操作此前以 `llm-passthrough` 理由被排除在 MCP 对等之外；按标题的 24 小时缓存吸收重复请求，且分类器输出上限为 50 个 token。
+- **配额：** 标准 —— OAuth（Pro）与仪表盘密钥上下文每次调用均消耗 MCP 每日预留（每 UTC 日 50 次）。环境 API 密钥（`wm_…`）调用方不受该每日预留约束，与其他所有 MCP 工具一样，仍受 60 次请求/分钟/密钥 的限流保护。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"classify_event","arguments":{"text":"Iran closes Strait of Hormuz to tanker traffic"}}
+  }'
+```
+
+</CodeGroup>
+
+### `extract_entities`
+
+与仪表盘共享的确定性命名实体提取：注册表实体（公司、指数、大宗商品、加密货币、行业、国家 —— 通过别名与关键词匹配）加上模式实体（CVE 编号、APT/FIN 威胁组织代号、被追踪的世界领导人）。不涉及 LLM。
+
+**参数（工具专用）：**
+
+| 名称 | 类型 | 描述 |
+|------|------|------|
+| `text` | string | 可选的提取文本，最长 2048 字符（超长输入返回 `error`）。省略时，工具转而跨当前头条摘要聚合实体。 |
+| `limit` | integer | 每个列表的最大实体数（1-50）。默认 20。 |
+
+- **API 端点：** `GET /api/news/v1/list-feed-digest`（仅头条模式；文本模式不发起任何请求）。
+- **类型：** 基于共享提取核心的确定性本地计算。头条模式下实体聚合为 `mentionCount`/`avgConfidence`；文本模式下每个匹配报告 `matchType`、`matchedText` 和 `confidence`。
+- **配额：** 标准 —— 每次调用消耗 MCP 每日预留。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"extract_entities","arguments":{"text":"CVE-2026-12345 exploited by APT28 against Microsoft cloud tenants"}}
+  }'
+```
+
+</CodeGroup>
+
+### `get_news_clusters`
+
+使用与仪表盘完全相同的 Jaccard 聚类（0.5 标题分词相似度）对实时头条摘要计算当前话题簇，因此 agent 看到的故事分组与 UI 一致。每个簇报告主标题、成员数、`distinctSourceCount`（`min_sources` 所过滤的交叉印证信号）、来源名称、热门关键词（过滤停用词与泛化词）、聚合威胁级别/类别以及时间跨度。服务器端主标题按新近度选取，因为摘要条目不携带每来源层级。
+
+**参数（工具专用）：**
+
+| 名称 | 类型 | 描述 |
+|------|------|------|
+| `limit` | integer | 返回簇的上限（1-25）。默认 10。 |
+| `min_sources` | integer | 仅返回覆盖**不同媒体来源数**不低于该值的簇（1-10）—— 真正的交叉印证，而非同一家媒体重复发稿。默认 1。 |
+
+- **API 端点：** `GET /api/news/v1/list-feed-digest`
+- **类型：** 确定性本地计算 —— 每次调用对约 150-200 条摘要头条运行聚类（上游为 CDN/Redis 缓存，15 分钟节奏）。
+- **配额：** 标准 —— 每次调用消耗 MCP 每日预留。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"get_news_clusters","arguments":{"min_sources":2,"limit":10}}
+  }'
+```
+
+</CodeGroup>
+
+### `get_keyword_spikes`
+
+相对基线的关键词、CVE 与 APT/FIN 威胁组织飙升趋势，使用与仪表盘趋势关键词引擎相同的词项候选与飙升判定数学（最低近期计数、严格基线倍数、来源多样性门槛）。工具会分别查询近期窗口与窗口前的基线数据，每组最多 800 条故事，因此高流量的近期窗口不会挤占基线样本。`baseline_hours` 报告实际采样的窗口前基线时长；`sample_truncated: true` 表示任一数据组触及上限。若没有窗口前故事，工具会返回空的飙升列表与明确的 `baseline unavailable` 说明，并且不会缓存该结果。结果按 `(window_hours, min_count)` 组合缓存 10 分钟。
+
+**参数（工具专用）：**
+
+| 名称 | 类型 | 描述 |
+|------|------|------|
+| `window_hours` | integer | 检测飙升的近期窗口（1-12）。默认 2。 |
+| `min_count` | integer | 词项构成飙升所需的最低近期窗口故事数（2-20）。默认 5。 |
+| `limit` | integer | 返回飙升的上限（1-25）。默认 10。 |
+
+- **API 端点：** 无 —— 直接从 Redis 读取故事累积器与 story-track key；不代理任何 HTTP 端点。
+- **类型：** 确定性本地计算，附带 10 分钟 Redis 结果缓存。当累积器不可用/为空，或故事存储仅部分可读时返回 `note` —— 部分读取的结果绝不写入缓存，因此瞬时 Redis 故障不会在整个 TTL 内持续提供错误的飙升数据。
+- **配额：** 标准 —— 每次调用消耗 MCP 每日预留。
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"get_keyword_spikes","arguments":{"window_hours":2,"limit":10}}
+  }'
+```
+
+</CodeGroup>
+
 ### `get_cyber_threats`
 
 活跃网络威胁情报：恶意软件 IOC（URLhaus、Feodotracker）、CISA 已知被利用漏洞和活跃的命令与控制基础设施。

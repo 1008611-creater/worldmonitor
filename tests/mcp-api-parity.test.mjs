@@ -118,9 +118,14 @@ const EXCLUDED_FROM_MCP_PARITY = new Map([
   ["POST /api/v2/shipping/webhooks",
     "mutating: webhook/registration write — POSTs persistent record"],
 
-  // === llm-passthrough (2) ===
-  ["GET /api/intelligence/v1/classify-event",
-    "llm-passthrough: invokes callLlm — per-call LLM cost prohibits open MCP exposure"],
+  // === llm-passthrough (1) ===
+  // classify-event moved to covered in #5697: the classify_event MCP tool wraps
+  // it behind an enum-validated, temperature-0, 50-output-token handler with a
+  // 24h per-title cache, so per-call LLM cost is bounded. Metering differs by
+  // credential class — OAuth/dashboard-key callers consume the 50/UTC-day MCP
+  // reservation; env-key (`wm_`) callers are bounded by the 60/min/key limiter
+  // only (see docs/mcp-tools-reference.mdx). Do not restate this as "the daily
+  // quota bounds it" without qualifying the env-key path.
   ["GET /api/market/v1/analyze-stock",
     "llm-passthrough: invokes callLlm — per-call LLM cost prohibits open MCP exposure"],
 

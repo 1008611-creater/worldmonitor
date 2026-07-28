@@ -19,7 +19,10 @@
     "endpoint": "https://worldmonitor.app/mcp"
   },
   "remotes": [
-    { "type": "streamable-http", "url": "https://worldmonitor.app/mcp" }
+    {
+      "type": "streamable-http",
+      "url": "https://worldmonitor.app/mcp"
+    }
   ],
   "capabilities": {
     "tools": true,
@@ -196,6 +199,22 @@
     {
       "name": "describe_tool",
       "description": "Return the full uncompressed definition of one tool by name. Use when the compressed tools/list entry is ambiguous about behaviour or argument semantics."
+    },
+    {
+      "name": "classify_event",
+      "description": "Classify a supplied news headline or short text into a threat category and severity via the enum-validated WorldMonitor event classifier (temperature-0, 24h-cached per title, never free-form LLM output). Input is capped at 500 characters. classification is null when the classifier cannot produce an enum-valid result."
+    },
+    {
+      "name": "extract_entities",
+      "description": "Extract named entities deterministically — registry entities (companies, indices, commodities, crypto, sectors, countries) plus pattern entities (CVE IDs, APT/FIN threat-group designators, tracked world leaders). Supply text (max 2 KB) to extract from it, or omit text to aggregate entities across the current headline digest. No LLM involved."
+    },
+    {
+      "name": "get_news_clusters",
+      "description": "Current topic clusters over the live headline digest, computed with the same Jaccard clustering the dashboard uses. Each cluster reports its primary headline, member count, distinct sources, top keywords, threat level, and time span. Deterministic — no LLM."
+    },
+    {
+      "name": "get_keyword_spikes",
+      "description": "Trending keyword, CVE, and APT/FIN threat-group spikes versus baseline, using the same term-candidacy and spike-decision math as the dashboard. Baseline derives from the 48-hour story accumulator (per-window story rate), not the dashboard's incremental 7-day client history. Results are cached for 10 minutes. Deterministic — no LLM."
     }
   ],
   "toolCategories": [
@@ -210,9 +229,13 @@
   ],
   "authentication": {
     "type": "oauth2",
-    "authorization_servers": ["https://api.worldmonitor.app"],
+    "authorization_servers": [
+      "https://api.worldmonitor.app"
+    ],
     "resource": "https://worldmonitor.app",
-    "scopes": ["mcp"],
+    "scopes": [
+      "mcp"
+    ],
     "alternative_methods": [
       {
         "type": "api_key",
