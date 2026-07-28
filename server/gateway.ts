@@ -1207,26 +1207,55 @@ export function createDomainGateway(
         return validationGuardResponse;
       }
 
+      // Only destructure validateUserApiKey: several gateway unit tests mock this
+      // module with a partial surface. Requiring isUserApiKeyUnavailableError at
+      // import time breaks those mocks (vitest throws "No export is defined").
+      // Classify unavailability by the stable `code` field instead.
       const { validateUserApiKey } = await import('./_shared/user-api-key');
-      const userKeyResult = await validateUserApiKey(wmKey);
-      if (userKeyResult) {
-        isUserApiKey = true;
-        usage.isUserApiKey = true;
-        usage.userApiKeyCustomerRef = userKeyResult.userId;
-        keyCheck = { valid: true, required: true };
-        // Propagate the resolved key-owner identity to downstream route
-        // handlers via x-user-id. The entitlement check itself takes the
-        // userId argument directly (see checkEntitlement(sessionUserId, …))
-        // so it no longer depends on this header — the header is now for
-        // handler consumption + the internal-MCP `isCallerPremium` path.
-        sessionUserId = userKeyResult.userId;
-        // The Clerk role belongs to the bearer subject, not the user-key owner.
-        // Once the explicit wm_ key becomes the identity source, require the
-        // key owner's Convex entitlement to drive tier-gated access.
-        sessionRole = null;
-        usage.sessionUserId = sessionUserId;
-        usage.clerkOrgId = null;
-        request = withAuthenticatedUserId(request, sessionUserId);
+      try {
+        const userKeyResult = await validateUserApiKey(wmKey);
+        if (userKeyResult) {
+          isUserApiKey = true;
+          usage.isUserApiKey = true;
+          usage.userApiKeyCustomerRef = userKeyResult.userId;
+          keyCheck = { valid: true, required: true };
+          // Propagate the resolved key-owner identity to downstream route
+          // handlers via x-user-id. The entitlement check itself takes the
+          // userId argument directly (see checkEntitlement(sessionUserId, …))
+          // so it no longer depends on this header — the header is now for
+          // handler consumption + the internal-MCP `isCallerPremium` path.
+          sessionUserId = userKeyResult.userId;
+          // The Clerk role belongs to the bearer subject, not the user-key owner.
+          // Once the explicit wm_ key becomes the identity source, require the
+          // key owner's Convex entitlement to drive tier-gated access.
+          sessionRole = null;
+          usage.sessionUserId = sessionUserId;
+          usage.clerkOrgId = null;
+          request = withAuthenticatedUserId(request, sessionUserId);
+        }
+      } catch (err) {
+        // Transient Convex validation outage must not look like an invalid key.
+        // Mirror api/_user-api-key.js serviceUnavailable() (503 + Retry-After +
+        // X-Validation-Mode: degraded) so clients retry instead of rotating keys.
+        // Duck-type on `code` so partial test mocks of user-api-key still work.
+        const code =
+          typeof err === 'object' && err !== null
+            ? (err as { code?: unknown }).code
+            : undefined;
+        if (code === 'validation_unavailable') {
+          emitRequest(503, 'validation_unavailable', null);
+          return new Response(JSON.stringify({ error: 'Service temporarily unavailable' }), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-store',
+              'Retry-After': '5',
+              'X-Validation-Mode': 'degraded',
+              ...corsHeaders,
+            },
+          });
+        }
+        throw err;
       }
     }
 
