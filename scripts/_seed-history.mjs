@@ -24,7 +24,7 @@
  * See tests/scripts-railway-nixpacks-no-escape-import.test.mts.
  */
 
-import { httpRetryError } from './_seed-utils.mjs';
+import { httpRetryError, resolveConvexSiteUrl } from './_seed-utils.mjs';
 import { embedBatch, normalizeForEmbedding } from './lib/brief-embedding.mjs';
 
 // Per-run cap. A seed tick that suddenly emits thousands of "historic"
@@ -120,14 +120,19 @@ function trimmedString(value, maxChars) {
 }
 
 /**
- * Sanitize + clamp a run's candidate records. Pure — no env, no clock.
+ * Validate + sanitize a run's candidate records. Pure — no env, no clock.
  *
  * Drops anything missing the three required fields (`dedupeKey`,
- * `title`, a finite `occurredAt`), truncates the two free-text fields,
+ * a nonblank `title`, a finite `occurredAt`) or exceeding a wire limit,
  * whitelists the wire shape, and keeps only the newest
  * HISTORY_MAX_RECORDS_PER_RUN by `occurredAt`. Output is sorted
  * newest-first with a `dedupeKey` tiebreak so a run that re-emits the
  * same records chunks them identically.
+ *
+ * Accepted `title` and `summary` values are preserved exactly. They are
+ * evidence fields exposed to agents, so trimming or truncating them would
+ * silently rewrite the source record. Limits are validation boundaries:
+ * over-long records are dropped rather than altered.
  *
  * `dedupeKey` is the caller's responsibility — the convention is
  * `${domain}:${resource}:${stableId}`. This helper never fabricates an
@@ -149,13 +154,15 @@ export function normalizeHistoryRecords(records) {
     // distinct events collapse into a single stored row. Over-long keys are a
     // caller bug, so drop the record (below) rather than corrupt the identity.
     const dedupeKey = trimmedString(raw.dedupeKey, Number.POSITIVE_INFINITY);
-    const title = trimmedString(raw.title, TITLE_MAX_CHARS);
+    const title = typeof raw.title === 'string' ? raw.title : '';
+    const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
     const occurredAt = typeof raw.occurredAt === 'number' ? raw.occurredAt : Number.NaN;
-    if (!dedupeKey || !title || !Number.isFinite(occurredAt)) continue;
+    if (!dedupeKey || !title.trim() || !Number.isFinite(occurredAt)) continue;
     if (dedupeKey.length > DEDUPE_KEY_MAX_CHARS) continue;
+    if (title.length > TITLE_MAX_CHARS) continue;
+    if (summary !== undefined && summary.length > SUMMARY_MAX_CHARS) continue;
 
     const record = { dedupeKey, title, occurredAt };
-    const summary = trimmedString(raw.summary, SUMMARY_MAX_CHARS);
     if (summary) record.summary = summary;
     const country = trimmedString(raw.country, 8);
     if (country) record.country = country;
@@ -217,8 +224,7 @@ async function readErrorSnippet(response) {
  * list of missing names so the caller can emit exactly one warn.
  */
 function resolveRelayConfig(env) {
-  const siteUrl =
-    env.CONVEX_SITE_URL || (env.CONVEX_URL ?? '').replace('.convex.cloud', '.convex.site');
+  const siteUrl = resolveConvexSiteUrl(env);
   const secret = env.RELAY_SHARED_SECRET ?? '';
   const openrouterKey = env.OPENROUTER_API_KEY ?? '';
 
@@ -228,7 +234,7 @@ function resolveRelayConfig(env) {
   if (!openrouterKey) missing.push('OPENROUTER_API_KEY');
   if (missing.length > 0) return { missing };
 
-  return { siteUrl: siteUrl.replace(/\/+$/, ''), secret, openrouterKey, missing };
+  return { siteUrl, secret, openrouterKey, missing };
 }
 
 /**
@@ -333,8 +339,15 @@ export function makeSeedHistoryAfterPublish({ domain, resource, buildRecords }) 
         records: buildRecords(data),
       });
       if (result?.skipped !== 'unconfigured') {
+        // `retracted` only appears once an operator has tombstoned something
+        // this run would otherwise have re-added (#5743), so it is appended
+        // rather than always printed: a nonzero count in a Railway log is the
+        // signal that a retraction is still doing work against a feed that
+        // has not stopped serving the item.
+        const retracted = result?.retracted ?? 0;
         console.log(
-          `  [intel-history] ${domain}/${resource} appended ${result?.inserted ?? 0}, deduped ${result?.skipped ?? 0}`,
+          `  [intel-history] ${domain}/${resource} appended ${result?.inserted ?? 0}, deduped ${result?.skipped ?? 0}` +
+            (retracted > 0 ? `, retracted ${retracted}` : ''),
         );
       }
     } catch (err) {
@@ -361,8 +374,9 @@ export function makeSeedHistoryAfterPublish({ domain, resource, buildRecords }) 
  * @param {() => number} [deps.now]        clock seam for the budget
  * @param {(ms: number) => Promise<void>} [deps.sleep] retry-delay seam
  * @param {number} [deps.budgetMs]         aggregate wall-clock budget override
- * @returns {Promise<{inserted: number, skipped: number, chunks: number, abandoned: number,
- *   failedChunks: number} | {skipped: 'unconfigured'}>}
+ * @returns {Promise<{inserted: number, skipped: number, retracted: number,
+ *   chunks: number, abandoned: number, failedChunks: number}
+ *   | {skipped: 'unconfigured'}>}
  *
  * Throws SeedHistoryError on a hard runtime failure; propagates the
  * embedder's own EmbeddingProviderError / EmbeddingTimeoutError. Never
@@ -388,7 +402,7 @@ export async function appendSeedHistory({ domain, resource, runId, records }, de
 
   const sanitized = normalizeHistoryRecords(records);
   if (sanitized.length === 0) {
-    return { inserted: 0, skipped: 0, chunks: 0, abandoned: 0, failedChunks: 0 };
+    return { inserted: 0, skipped: 0, retracted: 0, chunks: 0, abandoned: 0, failedChunks: 0 };
   }
 
   const now = deps.now ?? (() => Date.now());
@@ -426,6 +440,7 @@ export async function appendSeedHistory({ domain, resource, runId, records }, de
     return {
       inserted: 0,
       skipped: 0,
+      retracted: 0,
       chunks: 0,
       abandoned: sanitized.length,
       failedChunks: 0,
@@ -435,6 +450,7 @@ export async function appendSeedHistory({ domain, resource, runId, records }, de
   const url = `${config.siteUrl}${RELAY_PATH}`;
   let inserted = 0;
   let skipped = 0;
+  let retracted = 0;
   let chunks = 0;
   let abandoned = 0;
   let failedChunks = 0;
@@ -470,6 +486,7 @@ export async function appendSeedHistory({ domain, resource, runId, records }, de
       });
       inserted += Number(body?.inserted) || 0;
       skipped += Number(body?.skipped) || 0;
+      retracted += Number(body?.retracted) || 0;
       chunks += 1;
     } catch (err) {
       if (err?.budgetExhausted || now() >= deadline) {
@@ -487,5 +504,5 @@ export async function appendSeedHistory({ domain, resource, runId, records }, de
 
   if (chunks === 0 && failedChunks > 0) throw lastError;
 
-  return { inserted, skipped, chunks, abandoned, failedChunks };
+  return { inserted, skipped, retracted, chunks, abandoned, failedChunks };
 }

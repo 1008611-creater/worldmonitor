@@ -211,6 +211,34 @@ for (const [domain, resource, hook, payload] of HOOKS) {
     assert.match(warns[0], /non-fatal.*convex 503/);
   });
 
+  test(`${domain}/${resource} afterPublish surfaces a live retraction in the run log`, async () => {
+    // A nonzero `retracted` in the Railway log is the ONLY operator-facing
+    // signal that a tombstone is still suppressing a record the upstream feed
+    // has not stopped serving (#5743). The suffix is conditional, so without
+    // this the suppressed case renders byte-identically to "no tombstone
+    // exists" and the signal can be dropped by a refactor with nothing failing.
+    const logs = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      await hook(payload, { runId: 'run-42' }, async () => ({
+        inserted: 0,
+        skipped: 3,
+        retracted: 2,
+      }));
+      await hook(payload, { runId: 'run-42' }, async () => ({
+        inserted: 1,
+        skipped: 0,
+        retracted: 0,
+      }));
+    } finally {
+      console.log = originalLog;
+    }
+    assert.match(logs[0], /appended 0, deduped 3, retracted 2/);
+    // ...and stays out of the way when nothing is suppressed.
+    assert.match(logs[1], /appended 1, deduped 0$/);
+  });
+
   test(`${domain}/${resource} afterPublish stays quiet on unconfigured skip`, async () => {
     const logs = [];
     const originalLog = console.log;
@@ -238,3 +266,61 @@ for (const [file, needle] of WIRING) {
     assert.ok(source.includes(needle), `${file} must contain "${needle}"`);
   });
 }
+
+// ---------------------------------------------------------------------------
+// dedupeKey stability (#5743)
+//
+// The retraction path suppresses an identity, not a row, so a `dedupeKey` that
+// changes between runs for the SAME upstream item makes every tombstone
+// useless: the record returns under a fresh key and nothing reports a problem.
+// That assumption is load-bearing for the whole feature and, until these
+// tests, nothing pinned it — a cross-model review pass surfaced "add Date.now()
+// to the energy dedupeKey" as a mutation the suite would not kill.
+//
+// These call the REAL builders with the same input twice, and assert the key
+// depends only on properties of the upstream item.
+// ---------------------------------------------------------------------------
+
+test('every history dedupeKey is a pure function of the upstream item', () => {
+  const CASES = [
+    ['conflict', buildConflictHistoryRecords, { events: [ACLED_EVENT] }],
+    ['energy', buildEnergyHistoryRecords, { items: [ENERGY_ITEM] }],
+    ['military', buildCrossStraitHistoryRecords, { observations: [CROSS_STRAIT_OBSERVATION] }],
+  ];
+
+  for (const [label, build, payload] of CASES) {
+    const first = build(payload);
+    const second = build(JSON.parse(JSON.stringify(payload)));
+    assert.ok(first.length > 0, `${label} builder must produce a record`);
+    assert.deepEqual(
+      first.map((r) => r.dedupeKey),
+      second.map((r) => r.dedupeKey),
+      `${label} dedupeKey must not change between runs for identical input`,
+    );
+
+    // A clock-derived component is the specific failure mode: it survives a
+    // same-tick comparison above and only diverges across runs, so assert the
+    // key carries no fragment of the current time.
+    const now = String(Date.now());
+    for (const key of first.map((r) => r.dedupeKey)) {
+      for (const width of [13, 10]) {
+        assert.ok(
+          !key.includes(now.slice(0, width)),
+          `${label} dedupeKey must not embed the current time: ${key}`,
+        );
+      }
+    }
+  }
+});
+
+test('a changed upstream item yields a different key, an unchanged one does not', () => {
+  // The other half of the contract: the key must still DISCRIMINATE. A builder
+  // that returned a constant would pass the stability test above while
+  // collapsing every event onto one row — and one tombstone would then suppress
+  // an entire feed.
+  const a = buildEnergyHistoryRecords({ items: [ENERGY_ITEM] })[0].dedupeKey;
+  const b = buildEnergyHistoryRecords({
+    items: [{ ...ENERGY_ITEM, id: `${ENERGY_ITEM.id}-other` }],
+  })[0].dedupeKey;
+  assert.notEqual(a, b, 'distinct upstream ids must not collapse onto one key');
+});
