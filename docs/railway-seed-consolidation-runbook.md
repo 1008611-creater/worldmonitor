@@ -68,6 +68,25 @@ publisher, while still auditing their watch paths and required environment.
 Run the audit after adding or replacing a standalone seeder, changing a bundle
 dependency, or changing a production cron.
 
+The scheduled operational-acceptance workflow performs the same audit in
+read-only mode before checking compact health. Create the dedicated GitHub
+Actions environment `ingestion-acceptance-production`, restrict its deployment
+branch policy to `main`, and configure:
+
+- environment secret `RAILWAY_PRODUCTION_TOKEN`: a Railway project token scoped
+  to the production environment;
+- environment variable `RAILWAY_PROJECT_ID`: the `world-monitor` project ID.
+
+Do not define the Railway token as a repository or organization secret:
+`workflow_dispatch` can target another ref, while the environment's server-side
+branch policy keeps the production credential unavailable there. The workflow
+references the environment with deployment tracking disabled, maps the project
+token to the CLI's standard `RAILWAY_TOKEN` variable only for the link and audit
+steps, links only inside the ephemeral runner, and never passes `--apply`. Do not
+use the broader account-scoped `RAILWAY_API_TOKEN`. Missing or inaccessible
+context intentionally fails the acceptance run rather than silently skipping
+the live audit.
+
 ### Bootstrap R2 publisher contract
 
 The public bootstrap tiers use the dedicated private bucket
@@ -124,13 +143,18 @@ incident note.
 
 `.github/workflows/seed-freshness-monitor.yml` runs every 15 minutes on the
 default branch. Scheduled runs first require the latest `main` commit's `gate`
-status to be green; manual runs execute directly. The monitor checks public
-compact health and fails on every actionable problem, including `SEED_ERROR`,
-`STALE_SEED`, `STALE_CONTENT`, and degraded composed coverage. Statuses that
-explicitly end in `_ON_DEMAND` remain informational. It deliberately does not
-run on an ingestion push because Railway may not have deployed or executed that
-revision yet. This is the operational acceptance gate for the "merged and
-green, but production data is still unhealthy" gap.
+status to be green; a missing, pending, or failed gate makes the workflow fail
+closed instead of producing a green skipped run. Manual runs execute directly.
+After the repository gate, the workflow checks live Railway watch paths, cron
+schedules, required routing variables, and service presence against
+`scripts/railway-services.json`, then checks public compact health. It fails on
+every actionable problem, including `SEED_ERROR`, `STALE_SEED`,
+`STALE_CONTENT`, and degraded composed coverage. Statuses that explicitly end
+in `_ON_DEMAND` remain informational. It deliberately does not run on an
+ingestion push because Railway may not have deployed or executed that revision
+yet. This is the operational acceptance gate for the "merged and green, but
+production data is still unhealthy or running under stale deployment
+controls" gap.
 
 Do not use `railway redeploy` to recover a bad or stale source deployment.
 Railway documents redeploy as rebuilding the most recent deployment with the

@@ -366,18 +366,17 @@ function readEnvironmentConfig(environment) {
 }
 
 function readServiceIds(environment) {
-  const statuses = JSON.parse(runRailway([
+  const services = JSON.parse(runRailway([
     'service',
-    'status',
-    '--all',
+    'list',
     '--environment',
     environment,
     '--json',
   ]));
-  if (!Array.isArray(statuses)) {
-    throw new Error('railway service status --all must return an array');
+  if (!Array.isArray(services)) {
+    throw new Error('railway service list must return an array');
   }
-  return new Map(statuses.map((service) => [service.name, service.id]));
+  return new Map(services.map((service) => [service.name, service.id]));
 }
 
 function readRegistry() {
