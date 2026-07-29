@@ -32,7 +32,7 @@
       "name": "gdeltIntel",
       "status": "SEED_ERROR",
       "issue": 5768,
-      "reason": "GDELT repair route fails TLS (SSL_ERROR_SYSCALL). GDELT blocks Railway egress outright, so PROXY_URL is mandatory rather than a fallback, and seed-gdelt-intel is deliberately not part of the per-source proxy split."
+      "reason": "GDELT DOC blocks Railway direct egress and the shared proxy has returned 429, timeout, and TLS failures. GDELT_PROXY_URL now provides an independent route, but production still needs a verified source-specific exit before this baseline can be removed."
     },
     {
       "name": "humanitarianSummary",

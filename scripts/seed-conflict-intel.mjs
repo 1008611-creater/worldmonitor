@@ -117,18 +117,19 @@ export const HAPI_REQUIRED_COUNTRIES = [
   ...new Set([...HAPI_CRISIS_COUNTRIES, ...HAPI_DASHBOARD_COUNTRIES]),
 ];
 const HAPI_COUNTRIES = [...new Set([...HAPI_ONLY_COUNTRIES, ...HAPI_DASHBOARD_COUNTRIES, ...CONFLICT_COUNTRIES])];
-// A throttled failure, as it reaches us: fetchGdeltCountryEvents flattens the direct and
-// proxy attempts into one message, e.g. "...(last direct: HTTP 429) (last proxy: HTTP 429)".
-const RATE_LIMIT_ERROR = /\b429\b|rate.?limit|too many requests/i;
+// The bounded transport emits stable route-specific failure codes. Treat the
+// failures known to implicate the selected route as a run-scoped circuit
+// signal; repeating them for another country cannot improve source reachability.
+const GDELT_ROUTE_FAILURE = /\bGDELT_(?:SOURCE_PROXY|SHARED_PROXY|PROXY|DIRECT)_(?:CONFIG|HTTP_(?:401|403|404|406|407|408|410|429|451|5\d\d)|INVALID_JSON|TLS|TIMEOUT|DNS|TRANSPORT)\b|\bHTTP 429\b|SSL_ERROR_SYSCALL|\b(?:timed?\s*out|timeout)\b/i;
 // #5140: the GDELT fallback sweep may not LAUNCH a batch after this much of the
 // fetch phase has elapsed (fetchAll anchors the clock at its own entry and passes
 // an absolute deadline down, so slow aux feeds automatically shrink the sweep
 // window instead of stacking on top of it). HAPI now uses one bounded bulk request
 // instead of a 38-country sequential sweep. One
 // in-flight batch may still drain past the cutoff: ≤~100s at the knobs below
-// (15s concurrent direct legs + 4 × 20s SERIALIZED sync proxy curls — curlFetch is
-// execFileSync, so "concurrent" proxy attempts block the event loop one at a time;
-// 92s observed live 2026-07-10). Worst single fetchAll attempt before the bulk
+// (either 15s concurrent direct legs when no proxy is configured, or 4 × 20s
+// SERIALIZED sync proxy curls — curlFetch is execFileSync, so "concurrent"
+// proxy attempts block the event loop one at a time). Worst single fetchAll attempt before the bulk
 // fallback is now dominated by the GDELT path. Without this cap a
 // GDELT brownout ran 5 batches ≈ 375s+ → deadline breach → exit 75 every tick.
 // The bulk fallback runs after those parallel feeds settle, so its 60s bound
@@ -136,11 +137,8 @@ const RATE_LIMIT_ERROR = /\b429\b|rate.?limit|too many requests/i;
 // comfortably under ACLED_INTEL_LOCK_TTL_MS's 540s fetch deadline (lockTtlMs+120s)
 // below (re-verified #5554 review after growing HAPI_COUNTRIES to 38).
 export const GDELT_SWEEP_BUDGET_MS = 120_000;
-// maxRetries: 0 — a second direct attempt would honor GDELT's Retry-After header
-// (≤60s sleep, _gdelt-fetch.mjs MAX_RETRY_AFTER_MS), blowing any per-batch bound;
-// the proxy leg (IP-rotating) is the designed 429 answer, not a same-IP retry.
-// proxyMaxAttempts: 1 — proxy curls are synchronous (execFileSync, ≤20s each) and
-// serialize across the whole batch: each extra attempt adds 4 × 20s of worst case.
+// The shared GDELT transport enforces one selected-route attempt. These explicit
+// values pin that contract at this high-fanout caller.
 export const GDELT_COUNTRY_FETCH_OPTS = Object.freeze({ maxRetries: 0, proxyMaxAttempts: 1 });
 // Lock must outlive the worst legitimate run (runSeed's documented invariant —
 // _seed-utils.mjs: "a healthy seeder is designed never to outlive its own lock");
@@ -399,9 +397,9 @@ export async function fetchGdeltConflictEvents({
   const events = [];
   const failedCountries = [];
   let successfulCountries = 0;
-  const CONCURRENCY = 4; // bound the run window (20 countries × proxy retries)
+  const CONCURRENCY = 4;
   const launchCutoffAt = deadlineAt ?? now() + GDELT_SWEEP_BUDGET_MS;
-  for (let i = 0; i < CONFLICT_COUNTRIES.length; i += CONCURRENCY) {
+  for (let i = 0; i < CONFLICT_COUNTRIES.length;) {
     // #5140: stop LAUNCHING batches once the phase cutoff passes or the floor can
     // no longer be reached — either way the caller degrades to aux-only and exits 0,
     // instead of grinding retries into the fetch-phase deadline (exit 75).
@@ -415,7 +413,11 @@ export async function fetchGdeltConflictEvents({
       console.warn(`  [GDELT] conflict sweep stopped early (${why}) with ${i}/${CONFLICT_COUNTRIES.length} countries attempted`);
       break;
     }
-    const batch = remaining.slice(0, CONCURRENCY);
+    // Probe one country before widening. A selected-route failure on the canary
+    // falls straight through to the official bulk export instead of repeating
+    // the same blocked path across a four-country batch.
+    const batchSize = successfulCountries === 0 ? 1 : CONCURRENCY;
+    const batch = remaining.slice(0, batchSize);
     const results = await Promise.all(batch.map(cc => fetchCountryEvents(cc)));
     for (const result of results) {
       if (result?.ok) {
@@ -425,26 +427,20 @@ export async function fetchGdeltConflictEvents({
         failedCountries.push({ country: result?.country || 'unknown', error: result?.error || 'unknown failure' });
       }
     }
-    // #5256: back off out of a rate-limit storm instead of grinding into it. On
-    // 2026-07-13 GDELT 429'd every country, direct AND through the proxy — reproducible
-    // off-Railway, so it is a GLOBAL throttle, not our egress. Once a whole batch comes
-    // back throttled with zero successes anywhere, the remaining batches cannot succeed
-    // either; they just burn the run window and deepen the limit we are already hitting.
-    // (The floor check above would stop us eventually, but only after ~2× the requests.)
-    // A throttled batch rarely comes back UNIFORMLY 429: under load GDELT also times out and
-    // tears TLS mid-handshake, so a real storm looks like 3×429 + 1×SSL. Requiring every
-    // result to be a 429 would miss that and grind on for another batch. Trigger on the
-    // honest signal instead — the whole batch failed, nothing has succeeded anywhere, and at
-    // least one failure is an explicit rate-limit.
+    i += batch.length;
+
+    // A whole batch of selected-route failures means the route, not a country
+    // query, is unavailable. Open the circuit for 429, TLS, timeout, DNS,
+    // malformed upstream JSON, and route-wide HTTP statuses alike.
     const batchAllFailed = results.every(r => !r?.ok);
-    const anyRateLimited = results.some(r => RATE_LIMIT_ERROR.test(String(r?.error ?? '')));
-    if (batchAllFailed && anyRateLimited && successfulCountries === 0) {
-      const why = 'GDELT rate-limit storm (batch fully throttled, 0 successes)';
-      for (const cc of remaining.slice(CONCURRENCY)) failedCountries.push({ country: cc, error: why });
-      console.warn(`  [GDELT] conflict sweep backed off (${why}) after ${i + batch.length}/${CONFLICT_COUNTRIES.length} countries`);
+    const routeFailed = results.some(r => GDELT_ROUTE_FAILURE.test(String(r?.error ?? '')));
+    if (batchAllFailed && routeFailed) {
+      const why = 'GDELT selected-route circuit open (batch fully failed)';
+      for (const cc of CONFLICT_COUNTRIES.slice(i)) failedCountries.push({ country: cc, error: why });
+      console.warn(`  [GDELT] conflict sweep backed off (${why}) after ${i}/${CONFLICT_COUNTRIES.length} countries`);
       break;
     }
-    if (i + CONCURRENCY < CONFLICT_COUNTRIES.length) await pace(500); // inter-batch only; no trailing wait
+    if (i < CONFLICT_COUNTRIES.length) await pace(500); // inter-batch only; no trailing wait
   }
   if (successfulCountries < GDELT_MIN_SUCCESSFUL_COUNTRIES || events.length === 0) {
     const sample = failedCountries.slice(0, 6).map(({ country, error }) => `${country}:${error}`).join(', ');

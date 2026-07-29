@@ -916,8 +916,24 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   // true envelope reads at the canonical-key layer; this import establishes
   // the dependency so behavior stays byte-identical in PR 1.
   const meta = unwrapEnvelope(parseRedisValue(keyMetaValues.get(seedCfg.key))).data;
+  const metaCount = meta?.count ?? meta?.recordCount ?? null;
+  const errorCode = typeof meta?.errorCode === 'string'
+    && /^[A-Z0-9_]{1,64}$/.test(meta.errorCode)
+    ? meta.errorCode
+    : null;
   if (meta?.status === 'error') {
-    return { hasMeta: true, seedAge: null, seedStale: true, seedError: true, sourceUnavailable: false, sourceBlocked: false, metaReadFailed: false, metaCount: null, contentAge: null };
+    return {
+      hasMeta: true,
+      seedAge: null,
+      seedStale: true,
+      seedError: true,
+      sourceUnavailable: false,
+      sourceBlocked: false,
+      metaReadFailed: false,
+      metaCount,
+      contentAge: null,
+      errorCode,
+    };
   }
   let seedAge = null;
   let seedStale = true;
@@ -926,7 +942,6 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
     seedAge = Math.round((now - fetchedAt) / 60_000);
     seedStale = seedAge > seedCfg.maxStaleMin;
   }
-  const metaCount = meta?.count ?? meta?.recordCount ?? null;
   // `unavailable` is the one sourceState that means "this deployment never opted
   // into the adapter" (the producer had no credential to try with), as opposed to
   // "the adapter was tried and is broken" (`stale`/`error`). Grading the two the
@@ -971,7 +986,18 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
       contentStale: contentAgeMin == null || isFutureDated || contentAgeMin > meta.maxContentAgeMin,
     };
   }
-  return { hasMeta: meta != null, seedAge, seedStale, seedError: sourceDegraded, sourceUnavailable, sourceBlocked, metaReadFailed: false, metaCount, contentAge };
+  return {
+    hasMeta: meta != null,
+    seedAge,
+    seedStale,
+    seedError: sourceDegraded,
+    sourceUnavailable,
+    sourceBlocked,
+    metaReadFailed: false,
+    metaCount,
+    contentAge,
+    errorCode,
+  };
 }
 
 function isCascadeCovered(name, hasData, keyStrens, keyErrors) {
@@ -1006,7 +1032,17 @@ function classifyKey(name, redisKey, opts, ctx) {
 
   const strlen = keyStrens.get(redisKey) ?? 0;
   const hasData = keyHasData(redisKey, strlen);
-  const { hasMeta, seedAge, seedStale, seedError, sourceUnavailable, sourceBlocked, metaCount, contentAge } = meta;
+  const {
+    hasMeta,
+    seedAge,
+    seedStale,
+    seedError,
+    sourceUnavailable,
+    sourceBlocked,
+    metaCount,
+    contentAge,
+    errorCode,
+  } = meta;
 
   // When the data key is gone the meta count is meaningless; force records=0
   // so we never display the contradictory "EMPTY records=N>0" pair (item 1).
@@ -1073,6 +1109,7 @@ function classifyKey(name, redisKey, opts, ctx) {
   if (seedAge !== null) entry.seedAgeMin = seedAge;
   if (seedCfg) entry.maxStaleMin = seedCfg.maxStaleMin;
   if (seedCfg?.minRecordCount != null) entry.minRecordCount = seedCfg.minRecordCount;
+  if (status === 'SEED_ERROR' && errorCode) entry.errorCode = errorCode;
   // Surface content-age fields when seeder opted in (presence of
   // meta.maxContentAgeMin). Operators can distinguish "stale content" from
   // "stale seeder run" at a glance.

@@ -148,6 +148,7 @@ describe('Railway service registry coverage', () => {
     const PROXY_FALLBACK_RE =
       /process\.env\.([A-Z][A-Z0-9_]*_PROXY_URL)\s*\|\|\s*process\.env\.(PROXY_URL)\b/g;
     for (const file of [
+      'scripts/_gdelt-fetch.mjs',
       'scripts/seed-conflict-intel.mjs',
       'scripts/china-corporate-disclosures/adapters.mjs',
       'scripts/cross-strait-activity/adapters.mjs',
@@ -158,8 +159,8 @@ describe('Railway service registry coverage', () => {
       }
     }
     assert.ok(
-      fallbackPairs.length >= 3,
-      'expected the HAPI, SZSE and Japan MOD adapters to resolve a source-specific proxy with a PROXY_URL fallback',
+      fallbackPairs.length >= 4,
+      'expected the GDELT, HAPI, SZSE and Japan MOD adapters to resolve a source-specific proxy with a PROXY_URL fallback',
     );
 
     for (const [specific, shared] of fallbackPairs) {

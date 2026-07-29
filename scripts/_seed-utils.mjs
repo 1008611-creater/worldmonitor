@@ -1032,8 +1032,8 @@ export function sleep(ms) {
 // ─── Proxy helpers for sources that block Railway container IPs ───
 const { resolveProxyString, resolveProxyStringConnect } = createRequire(import.meta.url)('./_proxy-utils.cjs');
 
-export function resolveProxy() {
-  return resolveProxyString();
+export function resolveProxy(raw = process.env.PROXY_URL || '') {
+  return resolveProxyString(raw);
 }
 
 // For HTTP CONNECT tunneling (httpsProxyFetchJson); keeps gate.decodo.com, not us.decodo.com.
@@ -1076,12 +1076,10 @@ export function curlFetch(url, proxyAuth, headers = {}, { exec = execFileSync } 
     // with curl's own stderr, which names the failure without echoing the command.
     //
     // Dropping `.status` is load-bearing, not incidental: execFileSync sets it to curl's
-    // EXIT CODE (35, 56, 7…). _gdelt-fetch.mjs discriminates "upstream returned non-2xx"
-    // from "network/curl failure" purely on `typeof status === 'number'`, so leaking the
-    // exit code through made it read curl exit 35 as an HTTP status, find it absent from
-    // RETRYABLE_STATUSES, and refuse to retry the proxy — defeating the Decodo per-attempt
-    // IP rotation on exactly the TLS tears it exists to survive. Only a genuine HTTP
-    // status may carry `.status`.
+    // EXIT CODE (35, 56, 7…). _gdelt-fetch.mjs uses `.status` to distinguish upstream
+    // HTTP responses from transport failures, so leaking the exit code would classify
+    // curl exit 35 as an HTTP response and publish the wrong route diagnostic. Only a
+    // genuine HTTP status may carry `.status`.
     const stderr = redactProxyCredentials(err?.stderr || '').trim().split('\n').filter(Boolean).pop();
     throw Object.assign(
       new Error(`curl failed: ${stderr || redactProxyCredentials(err?.message) || 'unknown error'}`),
