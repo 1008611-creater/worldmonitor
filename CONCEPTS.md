@@ -158,6 +158,14 @@ The per-user record granting feature access — a plan key, feature flags with a
 
 Feature flags are resolved by merging the plan's catalog defaults under the stored row, so a record written before a flag existed still reports that flag's current default for its plan — "the row predates the field" is therefore never on its own a reason a capability would read as absent.
 
+### Affirmative Denial
+
+The rule governing every client-side premium gate: a surface may be withheld only on positive evidence that the session is unentitled — a settled signed-out session, or a loaded entitlement snapshot that fails the access predicate — never on the mere absence of evidence. Reading "no snapshot yet" as "not entitled" is what locks paying customers out, because a snapshot that has not arrived is indistinguishable from one that never will.
+
+Which way an unknown resolves depends on whether waiting terminates. A *bounded* unknown — one guaranteed to settle on its own within a known window, such as auth hydration — may withhold briefly, since the cost is a delay rather than a lockout; it must not be counted as a denial in funnel metrics, because no user was gated. An *unbounded* unknown — one that may simply never arrive, such as an entitlement subscription that gives up silently when its backend is unreachable or unconfigured — must resolve to access. A corollary follows from that asymmetry: a gate that fails open can revoke access mid-use, so any surface reachable during the open window must define what happens when the verdict flips. A fail-open gate is only safe when losing access has a specified behavior instead of stranding the user in a state whose exit affordance was just hidden. See also: Entitlement, Billing UX State.
+
+A gate is also only as live as the signal it reads. A predicate keyed on a field nothing in the system writes denies every caller forever while looking perfectly reasonable in review, and it raises no error and draws no complaint, because the surface never renders for anyone to miss.
+
 ### Plan Family
 
 The grouping of plan keys — pro-family (personal and business dashboard plans), API-family (programmatic-access plans), and enterprise — that billing and quota rules discriminate on. Checkout duplicate-detection, seat licensing, and quota scoping are all stated per-family, and a family is not recoverable from the tier number or from which credential a caller presents: tier gates are thresholds, so a higher-tier API-family plan clears every gate written with the pro family in mind, and an API-family subscriber can hold pro-class credentials. Rules written against any proxy for family (tier, credential class, feature flag) will misfire on the plans where the proxy and the family diverge. See also: Credential Class, Entitlement.
