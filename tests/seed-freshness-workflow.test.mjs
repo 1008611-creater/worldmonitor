@@ -38,13 +38,42 @@ function runScheduledGate(gateState) {
   const tempDir = mkdtempSync(join(repoRoot, '.tmp-seed-freshness-gate-'));
   const fakeBin = join(tempDir, 'bin');
   const fakeGh = join(fakeBin, 'gh');
+  const nonGateStatuses = Array.from({ length: 100 }, (_, index) => ({
+    context: `railway-${index}`,
+    state: 'success',
+    updated_at: '2026-07-29T12:00:00Z',
+  }));
+  const gateStatuses = gateState === 'missing'
+    ? []
+    : [
+        {
+          context: 'gate',
+          state: 'success',
+          updated_at: '2026-07-29T12:00:00Z',
+        },
+        {
+          context: 'gate',
+          state: gateState,
+          updated_at: '2026-07-29T12:01:00Z',
+        },
+      ];
 
   try {
-    // The workflow's only external input is the latest `gate` commit status.
-    // Replacing gh at PATH level executes the exact checked-in shell block
-    // without relying on GitHub's API or duplicating its branching logic.
+    // Put the latest `gate` status on a second API page. Replacing gh at PATH
+    // level executes the exact checked-in shell block and proves it cannot
+    // regress to GitHub's truncated default status response.
     mkdirSync(fakeBin);
-    writeFileSync(fakeGh, '#!/bin/sh\nprintf \'%s\\n\' "$FAKE_GATE_STATE"\n');
+    writeFileSync(
+      fakeGh,
+      [
+        '#!/bin/sh',
+        'case " $* " in *" --paginate "*) ;; *) exit 91 ;; esac',
+        'case " $* " in *" --slurp "*) ;; *) exit 92 ;; esac',
+        'case "$*" in *"/statuses?per_page=100"*) ;; *) exit 93 ;; esac',
+        'printf \'%s\\n\' "$FAKE_STATUS_PAGES"',
+        '',
+      ].join('\n'),
+    );
     chmodSync(fakeGh, 0o755);
 
     return spawnSync(
@@ -55,7 +84,7 @@ function runScheduledGate(gateState) {
         encoding: 'utf8',
         env: {
           ...process.env,
-          FAKE_GATE_STATE: gateState,
+          FAKE_STATUS_PAGES: JSON.stringify([nonGateStatuses, gateStatuses]),
           GH_TOKEN: 'test-token',
           GITHUB_REPOSITORY: 'koala73/worldmonitor',
           GITHUB_SHA: '0123456789abcdef',
@@ -129,6 +158,8 @@ describe('seed freshness workflow control plane', () => {
     assert.equal(gate['continue-on-error'], undefined);
     assert.equal(workflow.jobs.monitor['continue-on-error'], undefined);
     assert.doesNotMatch(gate.run, /should_run|Skipping seed freshness/);
+    assert.match(gate.run, /gh api --paginate --slurp/);
+    assert.match(gate.run, /statuses\?per_page=100/);
     const acceptance = stepNamed('Check ingestion operational acceptance');
     assert.equal(
       acceptance.if,

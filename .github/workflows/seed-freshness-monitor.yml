@@ -29,8 +29,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gate_state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" \
-            --jq '[.statuses[] | select(.context == "gate")] | sort_by(.updated_at) | last | .state // "missing"')
+          set -o pipefail
+          gate_state=$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" |
+              jq -r 'flatten | map(select(.context == "gate")) | sort_by(.updated_at) | last | .state // "missing"'
+          )
           echo "gate_state=$gate_state"
           if [ "$gate_state" != "success" ]; then
             echo "::error::Cannot establish ingestion operational acceptance because main gate is $gate_state."

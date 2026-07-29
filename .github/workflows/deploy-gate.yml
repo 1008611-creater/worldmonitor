@@ -33,6 +33,7 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          set -o pipefail
           required='["changes","docs-stats","unit","consumer-prices","sidecar","convex-tests","dom-tests","variant-smoke-full","resilience-validation-smoke","digest-image","typecheck","biome","public-docs","security-audit"]'
 
           if [ -n "$SHA" ]; then
@@ -42,8 +43,11 @@ jobs:
             # schedule / workflow_dispatch — sweep open PRs whose gate status
             # is still pending. Public-repo reads need no extra permission.
             shas=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --jq '.[].head.sha' | sort -u | while read -r s; do
-              state=$(gh api "repos/$REPO/commits/$s/status" \
-                --jq '[.statuses[] | select(.context == "gate")] | sort_by(.updated_at) | last | .state // "missing"')
+              state=$(
+                gh api --paginate --slurp \
+                  "repos/$REPO/commits/$s/statuses?per_page=100" |
+                  jq -r 'flatten | map(select(.context == "gate")) | sort_by(.updated_at) | last | .state // "missing"'
+              )
               if [ "$state" = "pending" ]; then echo "$s"; fi
             done)
             if [ -z "$shas" ]; then

@@ -209,6 +209,22 @@ describe('CI workflow coverage', () => {
     );
   });
 
+  it('paginates gate status history during the scheduled self-healing sweep', () => {
+    const deployGateJob = workflowJobBlock(deployGateWorkflow, 'gate');
+
+    assert.match(deployGateJob, /gh api --paginate --slurp/);
+    assert.match(deployGateJob, /commits\/\$s\/statuses\?per_page=100/);
+    assert.match(
+      deployGateJob,
+      /flatten \| map\(select\(\.context == "gate"\)\) \| sort_by\(\.updated_at\) \| last/,
+    );
+    assert.doesNotMatch(
+      deployGateJob,
+      /commits\/\$s\/status"/,
+      'the combined status endpoint silently truncates large commit-status histories',
+    );
+  });
+
   it('treats sidecar changes as code for PR smoke gating', () => {
     assert.ok(
       testWorkflow.includes('^src-tauri\\/sidecar\\/'),
