@@ -77,6 +77,7 @@ export type AiOverlay = {
   whyNow: string;
   technicalSummary: string;
   newsSummary: string;
+  newsSentiment?: number;
   bullishFactors: string[];
   riskFactors: string[];
   provider: string;
@@ -458,6 +459,17 @@ function round(value: number, digits = 2): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Normalize an LLM-supplied news-sentiment reading to a rounded score in
+ * [-1, 1], or undefined when the value is missing or not a finite number (so
+ * the field is omitted rather than defaulted). Exported for unit tests.
+ * @param value Raw value parsed from the overlay model's JSON.
+ */
+export function normalizeNewsSentiment(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return round(clamp(value, -1, 1), 2);
 }
 
 export function signalDirection(signal: string): 'long' | 'short' | null {
@@ -1370,7 +1382,7 @@ async function buildAiOverlay(
     messages: [
       {
         role: 'system',
-        content: 'You are a disciplined stock analyst. Weigh the fundamentals alongside the technicals and news — do not judge on price action alone. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. Return strict JSON only with keys: summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, riskFactors. Keep it concise, factual, and free of disclaimers.',
+        content: 'You are a disciplined stock analyst. Weigh the fundamentals alongside the technicals and news — do not judge on price action alone. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. Return strict JSON only with keys: summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, riskFactors, newsSentiment. newsSentiment is a signed number from -1 to 1 scoring how bullish the supplied news headlines are for the stock (-1 very bearish, 0 neutral or no material news, 1 very bullish); base it only on the supplied headlines. Keep it concise, factual, and free of disclaimers.',
       },
       {
         role: 'user',
@@ -1418,7 +1430,10 @@ async function buildAiOverlay(
     validate: (content) => {
       try {
         const parsed = JSON.parse(content) as Record<string, unknown>;
-        return typeof parsed.summary === 'string' && typeof parsed.action === 'string';
+        return typeof parsed.summary === 'string'
+          && typeof parsed.action === 'string'
+          && (headlines.length === 0
+            || (typeof parsed.newsSentiment === 'number' && Number.isFinite(parsed.newsSentiment)));
       } catch {
         return false;
       }
@@ -1437,6 +1452,7 @@ async function buildAiOverlay(
       newsSummary?: string;
       bullishFactors?: string[];
       riskFactors?: string[];
+      newsSentiment?: number;
     };
 
     return {
@@ -1446,6 +1462,7 @@ async function buildAiOverlay(
       whyNow: parsed.whyNow?.trim() || fallback.whyNow,
       technicalSummary: parsed.technicalSummary?.trim() || fallback.technicalSummary,
       newsSummary: parsed.newsSummary?.trim() || fallback.newsSummary,
+      newsSentiment: normalizeNewsSentiment(parsed.newsSentiment) ?? fallback.newsSentiment,
       bullishFactors: Array.isArray(parsed.bullishFactors) && parsed.bullishFactors.length > 0 ? parsed.bullishFactors.slice(0, 4) : fallback.bullishFactors,
       riskFactors: Array.isArray(parsed.riskFactors) && parsed.riskFactors.length > 0 ? parsed.riskFactors.slice(0, 4) : fallback.riskFactors,
       provider: llm.provider,
@@ -1566,6 +1583,9 @@ export function buildAnalysisResponse(params: {
       ...(earnings.consensusEps != null ? { consensusEps: earnings.consensusEps } : {}),
       ...(earnings.consensusRevenue != null ? { consensusRevenue: earnings.consensusRevenue } : {}),
     } : {}),
+    // Only surface sentiment when headlines were actually analyzed — otherwise
+    // a "no news" run would report a misleading synthetic neutral (0) reading.
+    ...(overlay.newsSentiment != null && headlines.length > 0 ? { newsSentiment: overlay.newsSentiment } : {}),
   };
 }
 
@@ -1651,8 +1671,9 @@ export async function analyzeStock(
   const name = (req.name || symbol).trim().slice(0, 120) || symbol;
   const includeNews = req.includeNews === true;
   const nameSuffix = name !== symbol ? `:${name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 30).toLowerCase()}` : '';
-  // v5 -> v6: risk analytics add required response fields. Never replay a
-  // pre-contract response without them into the Pro UI or API.
+  // v5 -> v6: risk analytics add required response fields and headline-backed
+  // LLM overlays add news sentiment. Never replay a pre-contract response
+  // without them into the Pro UI or API.
   const cacheKey = `market:analyze-stock:v6:${symbol}:${includeNews ? 'news' : 'no-news'}${nameSuffix}`;
 
   const fetchFreshAnalysis = async (): Promise<AnalyzeStockResponse | null> => {

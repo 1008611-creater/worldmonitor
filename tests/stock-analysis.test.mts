@@ -12,6 +12,7 @@ import {
   fetchYahooAnalystData,
   fetchYahooHistory,
   getFallbackOverlay,
+  normalizeNewsSentiment,
   selectEarningsForSymbol,
   type AnalystData,
 } from '../server/worldmonitor/market/v1/analyze-stock.ts';
@@ -112,6 +113,9 @@ afterEach(() => {
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.OLLAMA_API_URL;
   delete process.env.OLLAMA_MODEL;
+  delete process.env.LLM_API_URL;
+  delete process.env.LLM_API_KEY;
+  delete process.env.LLM_MODEL;
 });
 
 describe('analyzeStock handler', () => {
@@ -360,6 +364,7 @@ describe('fetchYahooAnalystData', () => {
                 newsSummary: 'Coverage is stable.',
                 bullishFactors: ['Profitable'],
                 riskFactors: ['Leverage'],
+                newsSentiment: 0.42,
               }),
             },
             finish_reason: 'stop',
@@ -380,9 +385,12 @@ describe('fetchYahooAnalystData', () => {
     assert.equal(response.fundamentals?.debtToEquity, 1.5);
     assert.equal(response.fundamentals?.financialCurrency, 'CNY');
 
+    assert.equal(response.newsSentiment, 0.42);
+
     const systemPrompt = llmRequestBody?.messages?.find((message) => message.role === 'system')?.content || '';
     assert.match(systemPrompt, /debtToEquity 1\.5 means debt is 1\.5x equity/);
     assert.match(systemPrompt, /fundamentals\.financialCurrency/);
+    assert.match(systemPrompt, /newsSentiment/);
 
     const userMessage = llmRequestBody?.messages?.find((message) => message.role === 'user')?.content || '{}';
     const userPayload = JSON.parse(userMessage) as {
@@ -391,6 +399,57 @@ describe('fetchYahooAnalystData', () => {
     assert.equal(userPayload.fundamentals?.debtToEquity, 1.5);
     assert.equal(userPayload.fundamentals?.financialCurrency, 'CNY');
     assert.equal(userPayload.fundamentals?.freeCashflow, -49_000_000);
+  });
+
+  it('falls through to the next provider when headline sentiment is missing', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+    process.env.LLM_API_URL = 'https://generic.example/v1/chat/completions';
+    process.env.LLM_API_KEY = 'test-generic-key';
+    const llmPostUrls: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('query1.finance.yahoo.com/v8/finance/chart')) {
+        return new Response(JSON.stringify(mockChartPayload), { status: 200 });
+      }
+      if (url.includes('query1.finance.yahoo.com/v10/finance/quoteSummary')) {
+        return new Response(JSON.stringify(mockQuoteSummaryPayload), { status: 200 });
+      }
+      if (url.includes('news.google.com')) {
+        return new Response(mockNewsXml, { status: 200 });
+      }
+      if ((init?.method || 'GET') === 'GET') {
+        return new Response('ok', { status: 200 });
+      }
+      llmPostUrls.push(url);
+      const newsSentiment = url.includes('openrouter.ai') ? undefined : -0.35;
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: 'Fallback provider response.',
+              action: 'Hold',
+              newsSentiment,
+            }),
+          },
+          finish_reason: 'stop',
+        }],
+        usage: { total_tokens: 20, prompt_tokens: 15, completion_tokens: 5 },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const response = await analyzeStock({} as never, {
+      symbol: 'BABA',
+      name: 'Alibaba',
+      includeNews: true,
+    });
+
+    assert.equal(response.provider, 'generic');
+    assert.equal(response.newsSentiment, -0.35);
+    assert.deepEqual(llmPostUrls, [
+      'https://openrouter.ai/api/v1/chat/completions',
+      'https://generic.example/v1/chat/completions',
+    ]);
   });
 });
 
@@ -496,6 +555,43 @@ describe('buildAnalysisResponse earnings surfacing', () => {
     assert.equal(resp.nextEarningsDate, '2026-07-30');
     assert.ok(!('consensusEps' in resp));
     assert.ok(!('consensusRevenue' in resp));
+  });
+
+  const headline = { title: 'Earnings beat', source: 'Reuters', publishedAt: '2026-07-25T00:00:00Z' };
+
+  it('surfaces a provided overlay news sentiment when headlines were analyzed', () => {
+    const resp = buildAnalysisResponse({ ...base, headlines: [headline], overlay: { ...overlay, newsSentiment: -0.3 } });
+    assert.equal(resp.newsSentiment, -0.3);
+  });
+
+  it('omits newsSentiment when no headlines were analyzed (avoids a synthetic neutral)', () => {
+    const resp = buildAnalysisResponse({ ...base, headlines: [], overlay: { ...overlay, newsSentiment: 0 } });
+    assert.ok(!('newsSentiment' in resp));
+  });
+
+  it('omits newsSentiment when the overlay carries none (rules fallback)', () => {
+    const resp = buildAnalysisResponse({ ...base, headlines: [headline] });
+    assert.ok(!('newsSentiment' in resp));
+  });
+});
+
+describe('normalizeNewsSentiment', () => {
+  it('rounds an in-range reading to two decimals', () => {
+    assert.equal(normalizeNewsSentiment(0.4237), 0.42);
+    assert.equal(normalizeNewsSentiment(-0.5), -0.5);
+    assert.equal(normalizeNewsSentiment(0), 0);
+  });
+
+  it('clamps out-of-range readings into [-1, 1]', () => {
+    assert.equal(normalizeNewsSentiment(1.4), 1);
+    assert.equal(normalizeNewsSentiment(-3), -1);
+  });
+
+  it('returns undefined for missing or non-finite values', () => {
+    assert.equal(normalizeNewsSentiment(undefined), undefined);
+    assert.equal(normalizeNewsSentiment('0.5'), undefined);
+    assert.equal(normalizeNewsSentiment(Number.NaN), undefined);
+    assert.equal(normalizeNewsSentiment(Number.POSITIVE_INFINITY), undefined);
   });
 });
 
