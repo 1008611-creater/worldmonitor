@@ -182,12 +182,20 @@ const HOOKS = [
     { observations: [CROSS_STRAIT_OBSERVATION] }],
 ];
 
+// The ingest-health recorder (#5736) is the hook's second injectable seam; stub
+// it out here so these wiring tests stay offline and keep asserting only the
+// append leg. tests/seed-history-ingest-health.test.mjs owns its behavior.
+const noopRecordHealth = async () => null;
+
 for (const [domain, resource, hook, payload] of HOOKS) {
   test(`${domain}/${resource} afterPublish passes projected records to append`, async () => {
     const calls = [];
-    await hook(payload, { runId: 'run-42' }, async (args) => {
-      calls.push(args);
-      return { inserted: 1, skipped: 0, chunks: 1 };
+    await hook(payload, { runId: 'run-42' }, {
+      append: async (args) => {
+        calls.push(args);
+        return { inserted: 1, skipped: 0, chunks: 1 };
+      },
+      recordHealth: noopRecordHealth,
     });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].domain, domain);
@@ -201,8 +209,11 @@ for (const [domain, resource, hook, payload] of HOOKS) {
     const originalWarn = console.warn;
     console.warn = (...args) => warns.push(args.join(' '));
     try {
-      await hook(payload, { runId: 'run-42' }, async () => {
-        throw new Error('convex 503');
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => {
+          throw new Error('convex 503');
+        },
+        recordHealth: noopRecordHealth,
       });
     } finally {
       console.warn = originalWarn;
@@ -221,16 +232,14 @@ for (const [domain, resource, hook, payload] of HOOKS) {
     const originalLog = console.log;
     console.log = (...args) => logs.push(args.join(' '));
     try {
-      await hook(payload, { runId: 'run-42' }, async () => ({
-        inserted: 0,
-        skipped: 3,
-        retracted: 2,
-      }));
-      await hook(payload, { runId: 'run-42' }, async () => ({
-        inserted: 1,
-        skipped: 0,
-        retracted: 0,
-      }));
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => ({ inserted: 0, skipped: 3, retracted: 2 }),
+        recordHealth: noopRecordHealth,
+      });
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => ({ inserted: 1, skipped: 0, retracted: 0 }),
+        recordHealth: noopRecordHealth,
+      });
     } finally {
       console.log = originalLog;
     }
@@ -244,11 +253,71 @@ for (const [domain, resource, hook, payload] of HOOKS) {
     const originalLog = console.log;
     console.log = (...args) => logs.push(args.join(' '));
     try {
-      await hook(payload, { runId: 'run-42' }, async () => ({ skipped: 'unconfigured' }));
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => ({ skipped: 'unconfigured', missing: ['RELAY_SHARED_SECRET'] }),
+        recordHealth: noopRecordHealth,
+      });
     } finally {
       console.log = originalLog;
     }
     assert.deepEqual(logs.filter((line) => line.includes('intel-history')), []);
+  });
+
+  test(`${domain}/${resource} afterPublish reports both outcomes to ingest health`, async () => {
+    const observations = [];
+    const recordHealth = async (observation) => {
+      observations.push(observation);
+      return null;
+    };
+    const originalWarn = console.warn;
+    const originalLog = console.log;
+    console.warn = () => {};
+    console.log = () => {};
+    try {
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => ({ inserted: 2, skipped: 1, chunks: 1, abandoned: 0, failedChunks: 0 }),
+        recordHealth,
+      });
+      await hook(payload, { runId: 'run-43' }, {
+        append: async () => {
+          throw new Error('convex 503');
+        },
+        recordHealth,
+      });
+    } finally {
+      console.warn = originalWarn;
+      console.log = originalLog;
+    }
+
+    assert.equal(observations.length, 2);
+    assert.equal(observations[0].domain, domain);
+    assert.equal(observations[0].resource, resource);
+    assert.equal(observations[0].runId, 'run-42');
+    assert.deepEqual(observations[0].result, { inserted: 2, skipped: 1, chunks: 1, abandoned: 0, failedChunks: 0 });
+    assert.equal(observations[0].error, null);
+    assert.equal(observations[1].result, null);
+    assert.match(observations[1].error.message, /convex 503/);
+  });
+
+  test(`${domain}/${resource} afterPublish survives an ingest-health recorder that throws`, async () => {
+    const warns = [];
+    const originalWarn = console.warn;
+    const originalLog = console.log;
+    console.warn = (...args) => warns.push(args.join(' '));
+    console.log = () => {};
+    try {
+      await hook(payload, { runId: 'run-42' }, {
+        append: async () => ({ inserted: 1, skipped: 0, chunks: 1 }),
+        recordHealth: async () => {
+          throw new Error('upstash down');
+        },
+      });
+    } finally {
+      console.warn = originalWarn;
+      console.log = originalLog;
+    }
+    assert.equal(warns.length, 1);
+    assert.match(warns[0], /ingest-health record failed \(non-fatal\).*upstash down/);
   });
 }
 

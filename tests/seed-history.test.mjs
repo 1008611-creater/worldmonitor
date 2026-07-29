@@ -249,7 +249,7 @@ describe('buildHistoryEmbeddingText', () => {
 // ── appendSeedHistory — env guard ─────────────────────────────────────────────
 
 describe('appendSeedHistory env guard', () => {
-  it('returns { skipped: "unconfigured" } with exactly one warn and no fetch', async () => {
+  it('returns the unconfigured skip plus the missing names, with one warn and no fetch', async () => {
     const { fetchImpl, calls } = stubFetch({ body: { inserted: 1, skipped: 0 } });
     const { embed, batches } = stubEmbed();
 
@@ -260,7 +260,12 @@ describe('appendSeedHistory env guard', () => {
       ),
     );
 
-    assert.deepEqual(result, { skipped: 'unconfigured' });
+    // `missing` feeds the ingest-health record's `missingConfig` (#5736), so an
+    // operator reading /api/health learns WHICH variable is absent.
+    assert.deepEqual(result, {
+      skipped: 'unconfigured',
+      missing: ['CONVEX_SITE_URL (or CONVEX_URL)', 'RELAY_SHARED_SECRET', 'OPENROUTER_API_KEY'],
+    });
     assert.equal(calls.length, 0);
     assert.equal(batches.length, 0);
     assert.equal(warns.length, 1);
