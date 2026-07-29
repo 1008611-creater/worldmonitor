@@ -18,7 +18,7 @@ tags: [pre-push, husky, vitest, node-test-runner, happy-dom, ci-gate, green-whil
 
 ## Problem
 
-`.husky/pre-push` swept every changed test file into one runner. The repo has **two** runners that are not interchangeable, so every push touching `tests/dom/` failed inside the runner rather than in the test — and the gate was unpassable for that whole file class (#5795; fix opened in PR #5801, unmerged as of this writing).
+`.husky/pre-push` swept every changed test file into one runner. The repo has **two** runners that are not interchangeable, so every push touching `tests/dom/` failed inside the runner rather than in the test — and the gate was unpassable for that whole file class (#5795; fixed in PR #5801, merged 2026-07-29).
 
 ## Symptoms
 
