@@ -53,6 +53,7 @@
     "watchPatterns": [
       "scripts/_conflict-gdelt-bulk.mjs",
       "scripts/_conflict-gdelt.mjs",
+      "scripts/_conflict-hapi.mjs",
       "scripts/_country-resolver.mjs",
       "scripts/_gdelt-fetch.mjs",
       "scripts/_proxy-utils.cjs",

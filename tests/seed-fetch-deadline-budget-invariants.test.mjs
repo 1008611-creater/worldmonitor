@@ -73,6 +73,10 @@ describe('seed fetch-phase deadline & TTL invariants (issue #4864)', () => {
       GDELT_COUNTRY_FETCH_OPTS,
       ACLED_INTEL_LOCK_TTL_MS,
     } = await import('../scripts/seed-conflict-intel.mjs');
+    const {
+      HAPI_HDX_METADATA_TIMEOUT_MS,
+      HAPI_HDX_SNAPSHOT_TIMEOUT_MS,
+    } = await import('../scripts/_conflict-hapi.mjs');
     const { GDELT_BULK_WORST_NETWORK_MS } = await import('../scripts/_conflict-gdelt-bulk.mjs');
 
     // The transport rejects same-route retries; this caller pins that contract.
@@ -89,11 +93,14 @@ describe('seed fetch-phase deadline & TTL invariants (issue #4864)', () => {
       SWEEP_CONCURRENCY * GDELT_COUNTRY_FETCH_OPTS.proxyMaxAttempts * PROXY_CURL_CEILING_MS,
     );
 
-    // HAPI aux worst: 20 sequential countries × (15s timeout + 300ms pace). It
-    // precedes the sweep inside the same fetch phase, and the sweep cutoff is
-    // anchored at phase START — so the two occupy the same window (max), they
-    // do not stack (sum).
-    const HAPI_WORST_MS = 20 * (15_000 + 300);
+    // HAPI bot-block fallback worst at the January boundary: one 15s direct
+    // request, 60s metadata, then the current and previous annual snapshots.
+    // It runs inside the same parallel auxiliary phase as the GDELT sweep, so
+    // the two occupy the same window (max), they do not stack (sum).
+    const HAPI_DIRECT_REQUEST_MS = 15_000;
+    const HAPI_WORST_MS = HAPI_DIRECT_REQUEST_MS
+      + HAPI_HDX_METADATA_TIMEOUT_MS
+      + 2 * HAPI_HDX_SNAPSHOT_TIMEOUT_MS;
     const EXTRA_KEY_WRITE_SLACK_MS = 30_000;
     const worstFetchAttempt = Math.max(HAPI_WORST_MS, GDELT_SWEEP_BUDGET_MS + worstBatch)
       + GDELT_BULK_WORST_NETWORK_MS

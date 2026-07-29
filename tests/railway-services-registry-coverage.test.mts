@@ -149,7 +149,6 @@ describe('Railway service registry coverage', () => {
       /process\.env\.([A-Z][A-Z0-9_]*_PROXY_URL)\s*\|\|\s*process\.env\.(PROXY_URL)\b/g;
     for (const file of [
       'scripts/_gdelt-fetch.mjs',
-      'scripts/seed-conflict-intel.mjs',
       'scripts/china-corporate-disclosures/adapters.mjs',
       'scripts/cross-strait-activity/adapters.mjs',
     ]) {
@@ -159,8 +158,8 @@ describe('Railway service registry coverage', () => {
       }
     }
     assert.ok(
-      fallbackPairs.length >= 4,
-      'expected the GDELT, HAPI, SZSE and Japan MOD adapters to resolve a source-specific proxy with a PROXY_URL fallback',
+      fallbackPairs.length >= 3,
+      'expected the GDELT, SZSE and Japan MOD adapters to resolve a source-specific proxy with a PROXY_URL fallback',
     );
 
     for (const [specific, shared] of fallbackPairs) {
@@ -183,6 +182,26 @@ describe('Railway service registry coverage', () => {
         );
       }
     }
+  });
+
+  it('does not require an ineffective proxy route for HAPI', () => {
+    const conflictSeeder = readFileSync(
+      resolve(repoRoot, 'scripts/seed-conflict-intel.mjs'),
+      'utf8',
+    );
+    assert.doesNotMatch(
+      conflictSeeder,
+      /\bHAPI_PROXY_URL\b/,
+      'HAPI must fall back to the official HDX snapshot instead of retrying a blocked API through a proxy',
+    );
+
+    const conflictService = registry.find((entry) => entry.service === 'seed-conflict-intel');
+    assert.ok(conflictService, 'seed-conflict-intel must remain registered');
+    const requiredNames = (conflictService.requiredEnv ?? []).flat();
+    assert.ok(
+      !requiredNames.includes('HAPI_PROXY_URL'),
+      'seed-conflict-intel must not report a removed HAPI proxy route as a Railway dependency',
+    );
   });
 
   it('every Dockerfile.* CMD has a matching registry entry', () => {

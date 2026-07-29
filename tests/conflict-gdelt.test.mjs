@@ -309,9 +309,10 @@ test('fetchGdeltConflictEvents stops launching batches once the launch cutoff pa
 });
 
 test('fetchGdeltConflictEvents launches nothing when the phase cutoff already passed at entry (#5140)', async () => {
-  // fetchAll anchors deadlineAt at fetch-phase START; if slow aux feeds (HAPI is
-  // sequential, ~306s worst) consume the window first, the sweep must not add a
-  // single batch on top — it degrades instantly to the caught floor throw.
+  // fetchAll anchors deadlineAt at fetch-phase START; if slow aux feeds (HAPI's
+  // January snapshot fallback is bounded at ~315s) consume the window first,
+  // the sweep must not add a single batch on top — it degrades instantly to the
+  // caught floor throw.
   let calls = 0;
   await assert.rejects(
     fetchGdeltConflictEvents({

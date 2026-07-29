@@ -20,7 +20,7 @@ function hasConfiguredVariable(variables, name) {
 
 // A nested array is an any-of group: the service needs at least one of those
 // variables. Sources that resolve a routing value as `SOURCE_SPECIFIC || SHARED`
-// (HAPI, SZSE, Japan MOD) must declare it that way, or this gate is stricter
+// (currently SZSE and Japan MOD) must declare it that way, or this gate is stricter
 // than the runtime it guards and reports drift for a service that routes fine.
 // Same shape the bundle runner accepts in section.requiredEnv.
 export function unsatisfiedRequiredEnv(requiredEnv, variables) {

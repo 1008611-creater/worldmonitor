@@ -30,9 +30,31 @@ import {
 import { fetchGdeltJson } from './_gdelt-fetch.mjs';
 import { buildGdeltConflictUrl, mapGdeltArticlesToEvents, GDELT_COUNTRY_NAMES } from './_conflict-gdelt.mjs';
 import { fetchGdeltBulkConflictEvents, GDELT_ROLLING_WINDOW_MS, mergeGdeltBulkRollingWindow } from './_conflict-gdelt-bulk.mjs';
-import { parseProxyConfig, proxyFetch } from './_proxy-utils.cjs';
+import {
+  HAPI_HDX_MAX_RESPONSE_BYTES,
+  HAPI_HDX_PACKAGE_URL,
+  HAPI_MAX_PAGES,
+  HAPI_PAGE_LIMIT,
+  aggregateHapiConflictEvents,
+  buildHapiConflictEventsUrl,
+  fetchHapiHdxSnapshotRows,
+  hapiCountryCodeForIso3,
+  hapiHdxFailureReason,
+  parseHapiHdxConflictCsv,
+  selectHapiHdxCsvResources,
+} from './_conflict-hapi.mjs';
 import { makeSeedHistoryAfterPublish } from './_seed-history.mjs';
 import { resolveIso2 } from './_country-resolver.mjs';
+
+export {
+  HAPI_HDX_MAX_RESPONSE_BYTES,
+  HAPI_HDX_PACKAGE_URL,
+  aggregateHapiConflictEvents,
+  buildHapiConflictEventsUrl,
+  fetchHapiHdxSnapshotRows,
+  parseHapiHdxConflictCsv,
+  selectHapiHdxCsvResources,
+};
 
 loadEnvFile(import.meta.url);
 
@@ -83,9 +105,6 @@ export const HAPI_FAILURE_BACKOFF_MS = 2 * 60 * 60 * 1000;
 const HAPI_FAILURE_BACKOFF_KEY = 'conflict:humanitarian:hapi-backoff:v1';
 const HAPI_REQUEST_TIMEOUT_MS = 15_000;
 const HAPI_REQUEST_DELAY_MS = 1_100;
-const HAPI_PAGE_LIMIT = 10_000;
-const HAPI_MAX_PAGES = 3;
-const HAPI_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const PIZZINT_TTL = 600;
 
 export const CONFLICT_COUNTRIES = [
@@ -124,17 +143,19 @@ const GDELT_ROUTE_FAILURE = /\bGDELT_(?:SOURCE_PROXY|SHARED_PROXY|PROXY|DIRECT)_
 // #5140: the GDELT fallback sweep may not LAUNCH a batch after this much of the
 // fetch phase has elapsed (fetchAll anchors the clock at its own entry and passes
 // an absolute deadline down, so slow aux feeds automatically shrink the sweep
-// window instead of stacking on top of it). HAPI now uses one bounded bulk request
-// instead of a 38-country sequential sweep. One
+// window instead of stacking on top of it). HAPI now uses one bounded API request
+// plus, only on bot detection, an official snapshot instead of a 38-country
+// sequential sweep. One
 // in-flight batch may still drain past the cutoff: ≤~100s at the knobs below
 // (either 15s concurrent direct legs when no proxy is configured, or 4 × 20s
 // SERIALIZED sync proxy curls — curlFetch is execFileSync, so "concurrent"
 // proxy attempts block the event loop one at a time). Worst single fetchAll attempt before the bulk
 // fallback is now dominated by the GDELT path. Without this cap a
 // GDELT brownout ran 5 batches ≈ 375s+ → deadline breach → exit 75 every tick.
-// The bulk fallback runs after those parallel feeds settle, so its 60s bound
-// and 30s publish slack are additive: 220s + 60s + 30s = 310s — still
-// comfortably under ACLED_INTEL_LOCK_TTL_MS's 540s fetch deadline (lockTtlMs+120s)
+// HAPI's 15s API plus 60s metadata and, only at the January boundary, at most
+// two 120s annual snapshot downloads run inside the parallel auxiliary stage,
+// not after the sweep. The resulting ≤315s HAPI bound remains comfortably under
+// ACLED_INTEL_LOCK_TTL_MS's 540s fetch deadline (lockTtlMs+120s)
 // below (re-verified #5554 review after growing HAPI_COUNTRIES to 38).
 export const GDELT_SWEEP_BUDGET_MS = 120_000;
 // The shared GDELT transport enforces one selected-route attempt. These explicit
@@ -147,31 +168,13 @@ export const GDELT_COUNTRY_FETCH_OPTS = Object.freeze({ maxRetries: 0, proxyMaxA
 // 15min, so a hard-crashed run's dangling lock costs at most 7 of those minutes.
 export const ACLED_INTEL_LOCK_TTL_MS = 420_000;
 
-const ISO2_TO_ISO3 = loadSharedConfig('iso2-to-iso3.json');
-const ISO3_TO_ISO2 = new Map(
-  Object.entries(ISO2_TO_ISO3).map(([iso2, iso3]) => [String(iso3).toUpperCase(), iso2]),
-);
-
 // HDX HAPI's `app_identifier` is used for per-client tracking/rate-limiting, not
-// just auth. The previous identifier (`worldmonitor:monitor@worldmonitor.app`)
-// got persistently 429'd — confirmed NOT an IP-level block (a fresh identifier
-// from the same IP at the same instant got 200) and NOT a generic per-identifier
-// rate limit either: live probing found HDX is flagging any app_identifier whose
-// `application` field case-insensitively CONTAINS the substring "worldmonitor"
-// specifically (e.g. `worldmonitor2`, `WorldMonitor`, `xworldmonitorx` all 429;
-// `world-monitor`, `monitorworld`, `wm-crisis-tracker` all 200 from the same IP
-// in the same probe run) — almost certainly a manual flag HDX ops placed on the
-// name after our prior uncoordinated traffic pattern (see #5554). Only the
-// `application` field matters here — separately confirmed live that the `email`
-// field containing "worldmonitor" (monitor@worldmonitor.app, unchanged, kept as
-// the real contact address) is NOT part of the trigger: `totally-different-app-
-// name:monitor@worldmonitor.app` also got 200 in the same probe run. shared/
-// hapi-app-identifier.json's `application` value intentionally avoids the
-// substring for this reason; `email` doesn't need to. Whatever identifier is
-// configured there must ALSO stay low-volume going forward. This seeder is the
-// ONLY source of HAPI traffic; the RPC handlers only ever read the Redis keys
-// this writes. The current implementation makes one bulk request at most every
-// two hours, rather than 38 per-country requests every 15 minutes.
+// just auth. The API remains the preferred route, but HAPI now bot-blocks both
+// Railway's direct egress and the configured residential proxy. A bot block
+// therefore falls back to HAPI's official annual CSV snapshot on HDX instead of
+// retrying the identical API endpoint through another egress. This seeder is
+// the only source of HAPI traffic; the RPC handlers only read the Redis keys it
+// writes, and the freshness gate permits one attempt at most every two hours.
 const HAPI_APP_IDENTIFIER_CONFIG = loadSharedConfig('hapi-app-identifier.json');
 const HAPI_APP_IDENTIFIER = Buffer.from(
   `${HAPI_APP_IDENTIFIER_CONFIG.application}:${HAPI_APP_IDENTIFIER_CONFIG.email}`,
@@ -504,111 +507,6 @@ export async function fetchGdeltConflictEvents({
 
 // ─── Humanitarian Summary (HAPI) ───
 
-function previousMonthStart(nowMs) {
-  const now = new Date(nowMs);
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-    .toISOString()
-    .slice(0, 10);
-}
-
-export function buildHapiConflictEventsUrl({
-  nowMs = Date.now(),
-  offset = 0,
-  countryCode,
-  adminLevel = '0',
-} = {}) {
-  const url = new URL('https://hapi.humdata.org/api/v2/coordination-context/conflict-events');
-  url.searchParams.set('output_format', 'json');
-  if (adminLevel != null) url.searchParams.set('admin_level', String(adminLevel));
-  url.searchParams.set('start_date', previousMonthStart(nowMs));
-  url.searchParams.set('limit', String(HAPI_PAGE_LIMIT));
-  url.searchParams.set('offset', String(offset));
-  if (countryCode) {
-    const iso3 = ISO2_TO_ISO3[countryCode];
-    if (!iso3) throw new Error(`No ISO3 mapping for HAPI country ${countryCode}`);
-    url.searchParams.set('location_code', iso3);
-  }
-  return url.toString();
-}
-
-function finiteCount(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-export function aggregateHapiConflictEvents(
-  records,
-  { nowMs = Date.now(), countryCodes = HAPI_COUNTRIES } = {},
-) {
-  const targetCountries = new Set(countryCodes);
-  const aggregates = new Map();
-
-  for (const row of Array.isArray(records) ? records : []) {
-    const countryCode = ISO3_TO_ISO2.get(String(row?.location_code || '').toUpperCase());
-    if (!countryCode || !targetCountries.has(countryCode)) continue;
-
-    const referencePeriod = String(row?.reference_period_start || '');
-    if (!referencePeriod) continue;
-    const parsedAdminLevel = Number(row?.admin_level ?? 0);
-    const adminLevel = Number.isFinite(parsedAdminLevel) ? parsedAdminLevel : 0;
-
-    let aggregate = aggregates.get(countryCode);
-    if (
-      !aggregate
-      || referencePeriod > aggregate.referencePeriod
-      || (referencePeriod === aggregate.referencePeriod && adminLevel > aggregate.adminLevel)
-    ) {
-      aggregate = {
-        referencePeriod,
-        adminLevel,
-        countryName: String(row?.location_name || ''),
-        eventsTotal: 0,
-        eventsPV: 0,
-        eventsCT: 0,
-        eventsDem: 0,
-        fatalitiesPV: 0,
-        fatalitiesCT: 0,
-      };
-      aggregates.set(countryCode, aggregate);
-    }
-    if (
-      referencePeriod !== aggregate.referencePeriod
-      || adminLevel !== aggregate.adminLevel
-    ) continue;
-
-    const eventType = String(row?.event_type || '').toLowerCase();
-    const events = finiteCount(row?.events);
-    const fatalities = finiteCount(row?.fatalities);
-    aggregate.eventsTotal += events;
-    if (eventType === 'political_violence') {
-      aggregate.eventsPV += events;
-      aggregate.fatalitiesPV += fatalities;
-    } else if (eventType === 'civilian_targeting') {
-      aggregate.eventsCT += events;
-      aggregate.fatalitiesCT += fatalities;
-    } else if (eventType === 'demonstration') {
-      aggregate.eventsDem += events;
-    }
-  }
-
-  const results = {};
-  for (const [countryCode, aggregate] of aggregates) {
-    results[countryCode] = {
-      summary: {
-        countryCode,
-        countryName: aggregate.countryName,
-        conflictEventsTotal: aggregate.eventsTotal,
-        conflictPoliticalViolenceEvents: aggregate.eventsPV + aggregate.eventsCT,
-        conflictFatalities: aggregate.fatalitiesPV + aggregate.fatalitiesCT,
-        referencePeriod: aggregate.referencePeriod,
-        conflictDemonstrations: aggregate.eventsDem,
-        updatedAt: nowMs,
-      },
-    };
-  }
-  return results;
-}
-
 async function defaultPreserveHapiLastGood() {
   await extendExistingTtl(
     HAPI_COUNTRIES.map((countryCode) => `${HAPI_CACHE_KEY_PREFIX}:${countryCode}`),
@@ -621,7 +519,7 @@ async function defaultPreserveHapiLastGood() {
 }
 
 function hapiFailureReason(status, providerMessage = '') {
-  if (Number(status) === 429 && /blocked due to bot activity/i.test(providerMessage)) {
+  if (/blocked due to bot activity/i.test(providerMessage)) {
     return 'HAPI_BOT_BLOCK';
   }
   if (Number(status) === 429) return 'HAPI_RATE_LIMIT';
@@ -648,45 +546,6 @@ async function hapiResponseError(resp) {
       reasonCode: hapiFailureReason(resp.status, providerMessage),
     },
   );
-}
-
-function hapiProxyFailureReason(error) {
-  if (
-    Number(error?.status) === 407
-    || /Proxy CONNECT:[^\n]*\b407\b/i.test(String(error?.message ?? ''))
-  ) return 'PROXY_AUTH_FAILED';
-  if (error?.reasonCode) return error.reasonCode;
-  if (/PROXY_CONFIG_INVALID/i.test(String(error?.message ?? ''))) return 'PROXY_CONFIG_INVALID';
-  if (
-    error?.code === 'RESPONSE_TOO_LARGE'
-    || /RESPONSE_TOO_LARGE/i.test(String(error?.message ?? ''))
-  ) return 'RESPONSE_TOO_LARGE';
-  return 'PROXY_FETCH_FAILED';
-}
-
-async function fetchHapiViaConfiguredProxy(input, init, {
-  proxyConfig,
-  proxyRequestFn,
-}) {
-  if (!proxyConfig) throw new Error('PROXY_CONFIG_INVALID');
-  const result = await proxyRequestFn(String(input), proxyConfig, {
-    accept: 'application/json',
-    headers: init?.headers,
-    method: init?.method ?? 'GET',
-    maxResponseBytes: HAPI_MAX_RESPONSE_BYTES,
-    timeoutMs: HAPI_REQUEST_TIMEOUT_MS,
-    signal: init?.signal,
-  });
-  if (result.buffer.byteLength > HAPI_MAX_RESPONSE_BYTES) {
-    throw new Error('RESPONSE_TOO_LARGE');
-  }
-  return new Response(result.buffer, {
-    status: result.status,
-    headers: {
-      'Content-Length': String(result.buffer.byteLength),
-      'Content-Type': result.contentType || 'application/json',
-    },
-  });
 }
 
 async function fetchHapiRows({
@@ -739,8 +598,7 @@ export async function fetchAllHumanitarianSummaries({
   requiredCountryCodes = countryCodes === HAPI_COUNTRIES ? HAPI_REQUIRED_COUNTRIES : countryCodes,
   loadPreviousMarker = () => readSeedSnapshot(HAPI_CACHE_KEY_PREFIX),
   loadFailureBackoff = () => readSeedSnapshot(HAPI_FAILURE_BACKOFF_KEY),
-  proxyUrl = process.env.HAPI_PROXY_URL || process.env.PROXY_URL || '',
-  proxyRequestFn = proxyFetch,
+  snapshotFetchFn = (...args) => globalThis.fetch(...args),
   writeFailureBackoff = (value) => writeExtraKey(
     HAPI_FAILURE_BACKOFF_KEY,
     value,
@@ -775,48 +633,60 @@ export async function fetchAllHumanitarianSummaries({
     return null;
   }
 
-  const proxyConfig = proxyUrl ? parseProxyConfig(proxyUrl) : null;
-  const configuredProxyFetch = proxyUrl
-    ? (input, init) => fetchHapiViaConfiguredProxy(input, init, {
-        proxyConfig,
-        proxyRequestFn,
-      })
-    : null;
-  let useProxy = false;
-  let proxyTriggerFailure = null;
-  const fetchRowsViaProxy = async (options) => {
+  let useSnapshot = false;
+  let snapshotTriggerFailure = null;
+  let snapshotRowsPromise;
+  const loadSnapshotRows = () => {
+    if (!snapshotRowsPromise) {
+      snapshotRowsPromise = fetchHapiHdxSnapshotRows({
+        fetchFn: snapshotFetchFn,
+        nowMs,
+        countryCodes,
+      });
+    }
+    return snapshotRowsPromise;
+  };
+  const fetchRowsFromSnapshot = async ({ countryCode, adminLevel }) => {
     try {
-      return await fetchHapiRows({ ...options, fetchFn: configuredProxyFetch });
-    } catch (proxyFailure) {
+      const snapshotRows = await loadSnapshotRows();
+      return snapshotRows.filter((row) => {
+        const rowCountryCode = hapiCountryCodeForIso3(row?.location_code);
+        if (countryCode && rowCountryCode !== countryCode) return false;
+        if (adminLevel != null && String(row?.admin_level ?? '0') !== String(adminLevel)) {
+          return false;
+        }
+        return true;
+      });
+    } catch (snapshotFailure) {
+      const snapshotFailureReason = hapiHdxFailureReason(snapshotFailure);
       throw Object.assign(
-        new Error('HAPI proxy fallback failed after direct bot detection'),
+        new Error(
+          `HAPI HDX snapshot fallback failed after direct bot detection: ${snapshotFailureReason}`,
+        ),
         {
-          status: Number.isFinite(Number(proxyFailure?.status))
-            ? Number(proxyFailure.status)
-            : Number(proxyTriggerFailure?.status),
-          reasonCode: 'HAPI_PROXY_FALLBACK_FAILED',
-          directFailureReason: proxyTriggerFailure?.reasonCode ?? 'HAPI_BOT_BLOCK',
-          proxyFailureReason: hapiProxyFailureReason(proxyFailure),
+          status: Number.isFinite(Number(snapshotFailure?.status))
+            ? Number(snapshotFailure.status)
+            : Number(snapshotTriggerFailure?.status),
+          reasonCode: 'HAPI_HDX_SNAPSHOT_FALLBACK_FAILED',
+          directFailureReason: snapshotTriggerFailure?.reasonCode ?? 'HAPI_BOT_BLOCK',
+          snapshotFailureReason,
         },
       );
     }
   };
   const fetchRows = async (options) => {
-    if (useProxy) {
-      return fetchRowsViaProxy(options);
+    if (useSnapshot) {
+      return fetchRowsFromSnapshot(options);
     }
     try {
       return await fetchHapiRows({ ...options, fetchFn });
     } catch (directFailure) {
-      if (
-        !configuredProxyFetch
-        || directFailure?.reasonCode !== 'HAPI_BOT_BLOCK'
-      ) throw directFailure;
+      if (directFailure?.reasonCode !== 'HAPI_BOT_BLOCK') throw directFailure;
 
-      useProxy = true;
-      proxyTriggerFailure = directFailure;
-      console.warn('  HAPI direct request hit provider bot detection — retrying through configured proxy');
-      return fetchRowsViaProxy(options);
+      useSnapshot = true;
+      snapshotTriggerFailure = directFailure;
+      console.warn('  HAPI direct request hit provider bot detection — loading official HDX snapshot');
+      return fetchRowsFromSnapshot(options);
     }
   };
 
@@ -852,10 +722,12 @@ export async function fetchAllHumanitarianSummaries({
       } catch (error) {
         fallbackFailure = error;
         console.warn(`  HAPI ${countryCode} fallback failed: ${error.message}`);
-        if (error.reasonCode === 'HAPI_PROXY_FALLBACK_FAILED') throw error;
+        if (error.reasonCode === 'HAPI_HDX_SNAPSHOT_FALLBACK_FAILED') throw error;
         if (error.status === 429 || error.status === 403) break;
       }
-      if (i < missingCountries.length - 1) await pace(HAPI_REQUEST_DELAY_MS);
+      if (i < missingCountries.length - 1 && !useSnapshot) {
+        await pace(HAPI_REQUEST_DELAY_MS);
+      }
     }
 
     if (Object.keys(results).length === 0) {
@@ -872,8 +744,8 @@ export async function fetchAllHumanitarianSummaries({
               ...(fallbackFailure.directFailureReason
                 ? { directFailureReason: fallbackFailure.directFailureReason }
                 : {}),
-              ...(fallbackFailure.proxyFailureReason
-                ? { proxyFailureReason: fallbackFailure.proxyFailureReason }
+              ...(fallbackFailure.snapshotFailureReason
+                ? { snapshotFailureReason: fallbackFailure.snapshotFailureReason }
                 : {}),
             }
           : {},
@@ -913,8 +785,8 @@ export async function fetchAllHumanitarianSummaries({
     ...(failure?.directFailureReason
       ? { directFailureReason: failure.directFailureReason }
       : {}),
-    ...(failure?.proxyFailureReason
-      ? { proxyFailureReason: failure.proxyFailureReason }
+    ...(failure?.snapshotFailureReason
+      ? { snapshotFailureReason: failure.snapshotFailureReason }
       : {}),
   }).catch((error) => console.warn(`  HAPI failure health write failed: ${error.message}`));
   await writeFailureBackoff({
