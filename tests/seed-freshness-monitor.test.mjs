@@ -215,6 +215,10 @@ describe('scheduled seed freshness monitor', () => {
       // closed PR with nobody owning them. Distinct issue numbers is the
       // cheapest offline proxy for "somebody actually filed these".
       const issues = committed.acknowledged.map((entry) => entry.issue);
+      assert.ok(
+        !issues.includes(5771),
+        'recovered chinaCoverage degradation must not remain acknowledged',
+      );
       assert.equal(
         new Set(issues).size,
         issues.length,
