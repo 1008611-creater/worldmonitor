@@ -48,20 +48,21 @@ function runScheduledGate(gateState) {
     : [
         {
           context: 'gate',
-          state: 'success',
-          updated_at: '2026-07-29T12:00:00Z',
+          state: gateState,
+          updated_at: '2026-07-29T12:01:00Z',
         },
         {
           context: 'gate',
-          state: gateState,
+          state: gateState === 'success' ? 'failure' : 'success',
           updated_at: '2026-07-29T12:01:00Z',
         },
       ];
 
   try {
-    // Put the latest `gate` status on a second API page. Replacing gh at PATH
-    // level executes the exact checked-in shell block and proves it cannot
-    // regress to GitHub's truncated default status response.
+    // Put the latest `gate` status on a second API page followed by an older
+    // status with the same second-resolution timestamp. GitHub returns status
+    // history newest-first, so this proves the workflow neither truncates the
+    // response nor reorders equal timestamps into stale state.
     mkdirSync(fakeBin);
     writeFileSync(
       fakeGh,
@@ -160,6 +161,8 @@ describe('seed freshness workflow control plane', () => {
     assert.doesNotMatch(gate.run, /should_run|Skipping seed freshness/);
     assert.match(gate.run, /gh api --paginate --slurp/);
     assert.match(gate.run, /statuses\?per_page=100/);
+    assert.match(gate.run, /map\(select\(\.context == "gate"\)\) \| first/);
+    assert.doesNotMatch(gate.run, /sort_by\(\.updated_at\)/);
     const acceptance = stepNamed('Check ingestion operational acceptance');
     assert.equal(
       acceptance.if,

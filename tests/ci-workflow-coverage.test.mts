@@ -216,8 +216,9 @@ describe('CI workflow coverage', () => {
     assert.match(deployGateJob, /commits\/\$s\/statuses\?per_page=100/);
     assert.match(
       deployGateJob,
-      /flatten \| map\(select\(\.context == "gate"\)\) \| sort_by\(\.updated_at\) \| last/,
+      /flatten \| map\(select\(\.context == "gate"\)\) \| first/,
     );
+    assert.doesNotMatch(deployGateJob, /sort_by\(\.updated_at\)/);
     assert.doesNotMatch(
       deployGateJob,
       /commits\/\$s\/status"/,

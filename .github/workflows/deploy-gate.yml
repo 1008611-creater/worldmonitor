@@ -43,10 +43,12 @@ jobs:
             # schedule / workflow_dispatch — sweep open PRs whose gate status
             # is still pending. Public-repo reads need no extra permission.
             shas=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --jq '.[].head.sha' | sort -u | while read -r s; do
+              # The API guarantees newest-first status history. Preserve that
+              # order because updated_at ties within the same second.
               state=$(
                 gh api --paginate --slurp \
                   "repos/$REPO/commits/$s/statuses?per_page=100" |
-                  jq -r 'flatten | map(select(.context == "gate")) | sort_by(.updated_at) | last | .state // "missing"'
+                  jq -r 'flatten | map(select(.context == "gate")) | first | .state // "missing"'
               )
               if [ "$state" = "pending" ]; then echo "$s"; fi
             done)
