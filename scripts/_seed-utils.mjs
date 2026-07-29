@@ -1055,8 +1055,14 @@ export function redactProxyCredentials(text) {
 //
 // `exec` is an injection seam for tests ONLY — the credential scrubbing below lives in a
 // catch around execFileSync, and there is no other way to drive that branch deterministically.
-export function curlFetch(url, proxyAuth, headers = {}, { exec = execFileSync } = {}) {
-  const args = ['-sS', '--compressed', '--max-time', '15', '-L'];
+export function curlFetch(
+  url,
+  proxyAuth,
+  headers = {},
+  { exec = execFileSync, timeoutMs = 15_000 } = {},
+) {
+  const curlTimeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const args = ['-sS', '--compressed', '--max-time', String(curlTimeoutSeconds), '-L'];
   if (proxyAuth) {
     const proxyUrl = /^https?:\/\//i.test(proxyAuth) ? proxyAuth : `http://${proxyAuth}`;
     args.push('-x', proxyUrl);
@@ -1066,7 +1072,11 @@ export function curlFetch(url, proxyAuth, headers = {}, { exec = execFileSync } 
   args.push(url);
   let raw;
   try {
-    raw = exec('curl', args, { encoding: 'utf8', timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] });
+    raw = exec('curl', args, {
+      encoding: 'utf8',
+      timeout: timeoutMs + 5_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
   } catch (err) {
     // SECURITY: when curl itself exits non-zero (SSL_ERROR_SYSCALL, "CONNECT tunnel
     // failed", DNS), execFileSync builds an Error whose message is the ENTIRE argv —

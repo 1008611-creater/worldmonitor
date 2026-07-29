@@ -36,7 +36,7 @@ const GDELT_REQUEST_DELAY_MS = 5_500;
 // hours preserves a wide scheduling margin without blocking the next 4h cron
 // tick if a process dies before its owner-token release runs.
 export const GDELT_LOCK_TTL_MS = 2 * 60 * 60_000;
-const RUN_SEED_FETCH_PHASE_TIMEOUT_MS = 270_000;
+const RUN_SEED_FETCH_PHASE_TIMEOUT_MS = 390_000;
 const TIMELINE_ERROR_REASON = 'timeline_keys_missing_or_unconfirmed';
 const GDELT_UPSTREAM_ERROR_REASON = 'gdelt_upstream_unavailable';
 const GDELT_DOC_API = 'https://api.gdeltproject.org/api/v2/doc/doc';
@@ -45,8 +45,15 @@ const GDELT_DOC_API = 'https://api.gdeltproject.org/api/v2/doc/doc';
 // an injected/hung implementation, but a budget timeout opens the run circuit:
 // the abandoned promise is allowed to settle and no timeline or later-topic
 // request is launched alongside it.
-const FETCH_SOFT_BUDGET_MS = 180_000; // 3min — 90s headroom under the 270s hard deadline for merge + publish
-const MIN_REQUEST_BUDGET_MS = 25_000; // don't start a curl that cannot finish before the budget
+// The production residential route completed the real ArticleList query in
+// roughly 22s, with most of that time in the target TLS handshake. Each 4h run
+// now performs six article calls plus one topic's tone/volume pair (8 total);
+// the UTC slot rotation refreshes all six 14-day timeline pairs once per day.
+// At the 30s transport ceiling plus seven pacing gaps that sweep needs at most
+// ~279s. Five minutes bounds it without retries, and the runSeed deadline keeps
+// 90s for cache merge and fetch-phase cleanup.
+const FETCH_SOFT_BUDGET_MS = 300_000;
+const MIN_REQUEST_BUDGET_MS = 35_000; // 30s curl ceiling plus scheduling headroom
 
 const INTEL_TOPICS = [
   { id: 'military',     query: '(military exercise OR troop deployment OR airstrike OR "naval exercise") sourcelang:eng' },
@@ -206,7 +213,8 @@ export async function fetchAllTopics(deps = {}) {
     _minRequestBudgetMs = MIN_REQUEST_BUDGET_MS,
     _interRequestDelayMs = GDELT_REQUEST_DELAY_MS,
   } = deps;
-  const deadlineAt = _now() + _softBudgetMs;
+  const runStartedAt = _now();
+  const deadlineAt = runStartedAt + _softBudgetMs;
   const remaining = () => deadlineAt - _now();
 
   const topics = [];
@@ -249,6 +257,9 @@ export async function fetchAllTopics(deps = {}) {
       () => console.warn(`    ${INTEL_TOPICS[i].id}: article budget reached — falling back to cached`),
     );
     console.log(`    ${result.articles.length} articles`);
+    for (const series of TIMELINE_SERIES) {
+      result[series.topicField] = [];
+    }
     topics.push(result);
 
     if (result.budgetExceeded || result.failureCode) {
@@ -258,19 +269,36 @@ export async function fetchAllTopics(deps = {}) {
     }
 
     if (result.articles.length > 0) freshTopicCount += 1;
+  }
 
-    // Timeline calls are sequential. A failed route opens the same run circuit
-    // as an article failure, so Tone and Vol cannot simultaneously hammer an
-    // already failing proxy and no later topic is launched.
+  if (!failureCode && freshTopicCount === 0) {
+    failureCode = 'GDELT_EMPTY_ARTICLE_RESULTS';
+  }
+
+  // Timeline queries cover 14 days and are materially more expensive on
+  // GDELT's rate-limited search cluster than the 24h ArticleList queries.
+  // Refresh exactly one topic pair per 4h UTC slot, after all six article
+  // requests have completed. This caps a healthy run at eight DOC requests,
+  // refreshes every pair daily, and ensures a timeline 429 cannot starve later
+  // article topics. Skipped series remain empty so afterPublish extends their
+  // existing TTL without falsely stamping cached points as freshly fetched.
+  if (!failureCode && topics.length === INTEL_TOPICS.length) {
+    const fourHourSlot = Math.floor(runStartedAt / (4 * 60 * 60_000));
+    const slotIndex =
+      ((fourHourSlot % INTEL_TOPICS.length) + INTEL_TOPICS.length)
+      % INTEL_TOPICS.length;
+    const timelineTopic = INTEL_TOPICS[slotIndex];
+    const result = topics.find((topic) => topic.id === timelineTopic.id);
+    console.log(`  Refreshing ${timelineTopic.id} timeline pair...`);
     for (const series of TIMELINE_SERIES) {
       const timelineFallback = { points: [], errorCode: 'GDELT_FETCH_BUDGET_EXCEEDED' };
       const hasBudget = await paceNextRequest();
       const outcome = hasBudget
         ? await withBudget(
-            () => _fetchTimeline(INTEL_TOPICS[i], series.mode),
+            () => _fetchTimeline(timelineTopic, series.mode),
             remaining(),
             timelineFallback,
-            () => console.warn(`    ${INTEL_TOPICS[i].id}: ${series.id} timeline budget reached`),
+            () => console.warn(`    ${timelineTopic.id}: ${series.id} timeline budget reached`),
           )
         : timelineFallback;
       const normalized = Array.isArray(outcome)
@@ -279,22 +307,26 @@ export async function fetchAllTopics(deps = {}) {
       result[series.topicField] = Array.isArray(normalized?.points) ? normalized.points : [];
       if (normalized?.errorCode) {
         failureCode = normalized.errorCode;
-        console.warn(`    ${INTEL_TOPICS[i].id}: opening run circuit (${failureCode}); remaining DOC requests will use cached data`);
+        console.warn(`    ${timelineTopic.id}: opening run circuit (${failureCode}); remaining DOC requests will use cached data`);
         break;
       }
     }
-    for (const series of TIMELINE_SERIES) {
-      if (!Array.isArray(result[series.topicField])) result[series.topicField] = [];
-    }
     console.log(`    timeline: ${result._tone.length} tone pts, ${result._vol.length} vol pts`);
-    if (failureCode) break;
   }
 
   // Represent every topic so the cache-merge can backfill both the ones we
   // skipped (soft budget) and the ones that came back empty (429).
   const fetchedIds = new Set(topics.map((t) => t.id));
   for (const t of INTEL_TOPICS) {
-    if (!fetchedIds.has(t.id)) topics.push({ id: t.id, articles: [], fetchedAt: new Date().toISOString() });
+    if (!fetchedIds.has(t.id)) {
+      topics.push({
+        id: t.id,
+        articles: [],
+        fetchedAt: new Date().toISOString(),
+        _tone: [],
+        _vol: [],
+      });
+    }
   }
 
   // For topics that returned 0 articles (rate-limited or budget-skipped), preserve
@@ -320,10 +352,6 @@ export async function fetchAllTopics(deps = {}) {
   // Restore canonical topic order (backfilled entries were appended out of order).
   const order = new Map(INTEL_TOPICS.map((t, idx) => [t.id, idx]));
   topics.sort((a, b) => (order.get(a.id) ?? INTEL_TOPICS.length) - (order.get(b.id) ?? INTEL_TOPICS.length));
-  if (!failureCode && freshTopicCount === 0) {
-    failureCode = 'GDELT_EMPTY_ARTICLE_RESULTS';
-  }
-
   return {
     topics,
     fetchedAt: new Date().toISOString(),

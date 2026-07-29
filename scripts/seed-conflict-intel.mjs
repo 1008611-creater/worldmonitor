@@ -159,8 +159,14 @@ const GDELT_ROUTE_FAILURE = /\bGDELT_(?:SOURCE_PROXY|SHARED_PROXY|PROXY|DIRECT)_
 // below (re-verified #5554 review after growing HAPI_COUNTRIES to 38).
 export const GDELT_SWEEP_BUDGET_MS = 120_000;
 // The shared GDELT transport enforces one selected-route attempt. These explicit
-// values pin that contract at this high-fanout caller.
-export const GDELT_COUNTRY_FETCH_OPTS = Object.freeze({ maxRetries: 0, proxyMaxAttempts: 1 });
+// values pin that contract at this high-fanout caller. timeoutMs is pinned too:
+// _gdelt-fetch.mjs's default rose from 15s to 30s for seed-gdelt-intel's slow
+// residential-proxy route (issue #5830), but this sweep's own budget was never
+// re-tuned for that — GDELT_SWEEP_BUDGET_MS (120s) launches batches of 4 and
+// needs 16/20 countries to clear GDELT_MIN_SUCCESSFUL_COUNTRIES. Inheriting the
+// 30s default would let a single degraded batch eat a quarter of the whole
+// sweep budget, so this call site keeps the prior 15s ceiling explicitly.
+export const GDELT_COUNTRY_FETCH_OPTS = Object.freeze({ maxRetries: 0, proxyMaxAttempts: 1, timeoutMs: 15_000 });
 // Lock must outlive the worst legitimate run (runSeed's documented invariant —
 // _seed-utils.mjs: "a healthy seeder is designed never to outlive its own lock");
 // it also sets the fetch deadline (lockTtlMs + 120s margin = 540s). The default

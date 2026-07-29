@@ -42,8 +42,8 @@ describe('seed fetch-phase deadline & TTL invariants (issue #4864)', () => {
     assert.ok(minRequest && minRequest > 0 && minRequest < soft, 'MIN_REQUEST_BUDGET_MS must be a positive fraction of the soft budget');
     assert.ok(requestDelay && requestDelay >= 5_000, 'healthy DOC requests must remain evenly paced');
     assert.ok(
-      (17 * requestDelay) + minRequest < soft,
-      '18 paced DOC calls must leave response-time budget before the final request starts',
+      (7 * requestDelay) + minRequest < soft,
+      '8 paced DOC calls must leave response-time budget before the final request starts',
     );
   });
 

@@ -69,6 +69,57 @@ test('GDELT_PROXY_URL wins over PROXY_URL and skips the known-blocked direct rou
   assert.doesNotMatch(proxyAuths[0], /shared-proxy/);
 });
 
+test('the GDELT proxy path gives curl 30 seconds for slow residential TLS handshakes', async () => {
+  setProxyEnv({ GDELT_PROXY_URL: 'http://user:pass@gdelt-proxy.test:8100' });
+  let transportOptions;
+
+  await fetchGdeltJson(URL, {
+    label: 'military',
+    _proxyCurlFetcher: (_url, _proxyAuth, _headers, options) => {
+      transportOptions = options;
+      return JSON.stringify(PAYLOAD);
+    },
+  });
+
+  assert.deepEqual(transportOptions, { timeoutMs: 30_000 });
+});
+
+test('curlFetch applies its caller timeout to curl and leaves a bounded process grace period', () => {
+  let invocation;
+  const result = curlFetch(
+    URL,
+    'user:pass@gdelt-proxy.test:8100',
+    { Accept: 'application/json' },
+    {
+      timeoutMs: 30_000,
+      exec: (command, args, options) => {
+        invocation = { command, args, options };
+        return `${JSON.stringify(PAYLOAD)}\n200`;
+      },
+    },
+  );
+
+  const maxTimeIndex = invocation.args.indexOf('--max-time');
+  assert.equal(invocation.command, 'curl');
+  assert.equal(invocation.args[maxTimeIndex + 1], '30');
+  assert.equal(invocation.options.timeout, 35_000);
+  assert.deepEqual(JSON.parse(result), PAYLOAD);
+});
+
+test('curlFetch keeps the 15-second ceiling for callers that do not override it', () => {
+  let invocation;
+  curlFetch(URL, null, {}, {
+    exec: (_command, args, options) => {
+      invocation = { args, options };
+      return `${JSON.stringify(PAYLOAD)}\n200`;
+    },
+  });
+
+  const maxTimeIndex = invocation.args.indexOf('--max-time');
+  assert.equal(invocation.args[maxTimeIndex + 1], '15');
+  assert.equal(invocation.options.timeout, 20_000);
+});
+
 test('PROXY_URL remains the compatibility route when GDELT_PROXY_URL is absent', async () => {
   setProxyEnv({ PROXY_URL: 'http://user:pass@shared-proxy.test:8200' });
   const proxyAuths = [];

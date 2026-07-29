@@ -96,7 +96,7 @@ export const _PROXY_DEFAULTS = Object.freeze({
 export async function fetchGdeltJson(url, opts = {}) {
   const {
     label = 'unknown',
-    timeoutMs = 15_000,
+    timeoutMs = 30_000,
     maxRetries = 0,
     proxyMaxAttempts = 1,
     _fetch = globalThis.fetch,
@@ -135,6 +135,7 @@ export async function fetchGdeltJson(url, opts = {}) {
           url,
           proxyAuth,
           { 'User-Agent': CHROME_UA, Accept: 'application/json' },
+          { timeoutMs },
         ),
       );
       const parsed = JSON.parse(text);
