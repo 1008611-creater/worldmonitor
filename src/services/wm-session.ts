@@ -72,6 +72,11 @@ type WmSessionDeadReason = 'mint_failed' | 'retry_401' | 'cookie_not_persisted';
 let cookieIssuedThisSession = false;
 // Latched once a mint proves the browser did not keep the previous cookie.
 let cookiePersistenceBroken = false;
+// Anonymous-only fallback for clients that reject the shared-domain HttpOnly
+// cookie. Kept in memory (never local/session storage) and activated only
+// after the server proves a prior cookie did not make the round trip.
+let anonymousSessionHeaderToken: string | null = null;
+let useAnonymousSessionHeader = false;
 
 interface StoredSession {
   exp: number;
@@ -393,6 +398,7 @@ function noteMintCookieEvidence(hadSession: boolean, aCookieExistedWhenSent: boo
     // direct evidence outranks inference, same doctrine as noteRouteSuccess.
     cookieIssuedThisSession = true;
     cookiePersistenceBroken = false;
+    useAnonymousSessionHeader = false;
     return;
   }
   cookieIssuedThisSession = true;
@@ -409,6 +415,7 @@ function noteMintCookieEvidence(hadSession: boolean, aCookieExistedWhenSent: boo
   // without one: the browser is not storing it (strict cookie settings, an
   // in-app WebView, partitioned storage, a privacy extension).
   cookiePersistenceBroken = true;
+  useAnonymousSessionHeader = anonymousSessionHeaderToken !== null;
 }
 
 async function fetchNewSession(body?: { widgetKey?: string; proKey?: string }): Promise<StoredSession | null> {
@@ -416,6 +423,16 @@ async function fetchNewSession(body?: { widgetKey?: string; proKey?: string }): 
   // would otherwise let the first response to land make the others look like
   // follow-up mints that came back empty. See noteMintCookieEvidence.
   const aCookieExistedWhenSent = cookieIssuedThisSession;
+  const identityGenerationWhenSent = sessionIdentityGeneration;
+  // AbortSignal.timeout is Baseline 2024 and absent on older Safari/WebView and
+  // Smart-TV engines still present in production. Calling it directly throws
+  // before fetch is dispatched and looks exactly like a server-side
+  // mint_failed episode. AbortController has materially wider support.
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(
+    () => timeoutController.abort(),
+    fetchNewSessionTimeoutMs,
+  );
   try {
     const fetchImpl = nativeSessionFetch ?? globalThis.fetch;
     const resp = await fetchImpl(toApiUrl('/api/wm-session'), {
@@ -423,11 +440,18 @@ async function fetchNewSession(body?: { widgetKey?: string; proKey?: string }): 
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(fetchNewSessionTimeoutMs),
+      signal: timeoutController.signal,
     });
     if (!resp.ok) return null;
-    const data = await resp.json() as { exp?: unknown; hadSession?: unknown };
+    const data = await resp.json() as { exp?: unknown; hadSession?: unknown; token?: unknown };
     if (typeof data?.exp !== 'number') return null;
+    if (
+      sessionIdentityGeneration === identityGenerationWhenSent &&
+      typeof data.token === 'string' &&
+      data.token.startsWith('wms_')
+    ) {
+      anonymousSessionHeaderToken = data.token;
+    }
     // Absent on an older deployment: treat as "no evidence either way" and
     // leave the latch alone rather than accusing a healthy browser.
     if (typeof data.hadSession === 'boolean') {
@@ -436,6 +460,8 @@ async function fetchNewSession(body?: { widgetKey?: string; proKey?: string }): 
     return { exp: data.exp };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -461,6 +487,10 @@ export async function ensureWmSession(): Promise<boolean> {
       // name the real cause, instead of letting the retry_401 quorum report it
       // as the API rejecting a good cookie (WORLDMONITOR-WG/XP).
       if (cookiePersistenceBroken) {
+        if (anonymousSessionHeaderToken) {
+          useAnonymousSessionHeader = true;
+          return true;
+        }
         markWmSessionDead('cookie_not_persisted', '/api/wm-session');
         return false;
       }
@@ -495,6 +525,8 @@ export async function establishWmKeySession(keys: { widgetKey?: string; proKey?:
   routeStrikes.clear();
   recentRouteFailures.clear();
   cookiePersistenceBroken = false;
+  anonymousSessionHeaderToken = null;
+  useAnonymousSessionHeader = false;
   saveToStorage(fresh);
   return true;
 }
@@ -526,6 +558,8 @@ export function __resetWmSessionForTests(): void {
   recentRouteFailures.clear();
   cookieIssuedThisSession = false;
   cookiePersistenceBroken = false;
+  anonymousSessionHeaderToken = null;
+  useAnonymousSessionHeader = false;
   sentryEnqueue = enqueueSentryCall;
   fetchNewSessionTimeoutMs = 10_000;
 }
@@ -717,11 +751,21 @@ export function installWmSessionFetchInterceptor(): void {
     const requestClone = input instanceof Request ? input.clone() : null;
 
     const sendWith = (h: Headers, src: typeof input): Promise<Response> => {
+      const requestHeaders = new Headers(h);
+      if (
+        useAnonymousSessionHeader &&
+        anonymousSessionHeaderToken &&
+        !requestHeaders.has('Authorization') &&
+        !requestHeaders.has('X-WorldMonitor-Key') &&
+        !requestHeaders.has('X-Api-Key')
+      ) {
+        requestHeaders.set('X-WorldMonitor-Key', anonymousSessionHeaderToken);
+      }
       if (src instanceof Request) {
-        const cloned = new Request(src, { ...withCredentials(init), headers: h });
+        const cloned = new Request(src, { ...withCredentials(init), headers: requestHeaders });
         return original(cloned);
       }
-      return original(src, { ...withCredentials(init), headers: h });
+      return original(src, { ...withCredentials(init), headers: requestHeaders });
     };
 
     // Replay once with whatever cookie is current now and record what that
@@ -816,6 +860,17 @@ export function installWmSessionFetchInterceptor(): void {
         if (!fresh) {
           if (isCurrentSessionIdentity()) noteRecoveryFailure('mint_failed', path);
           return null;
+        }
+        // Recovery already has stronger evidence than a page-boot mint: the
+        // request that brought us here was rejected, and this fresh mint handed
+        // back an anonymous-only token. Use it for the verification replay now.
+        // This also covers reloads where sessionStorage retained a fresh expiry
+        // but the HttpOnly cookie was dropped: cookieIssuedThisSession starts
+        // false, so hadSession:false alone cannot safely prove persistence is
+        // broken, while replaying without the returned token would send every
+        // concurrent follower into the retry_401 quorum.
+        if (isCurrentSessionIdentity() && anonymousSessionHeaderToken) {
+          useAnonymousSessionHeader = true;
         }
         const retryResp = await replayAndReport();
         return retryResp.status === 401 ? null : retryResp;
