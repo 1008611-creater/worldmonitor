@@ -41,7 +41,7 @@ jobs:
       - name: Install pinned Railway CLI
         run: npm install --global @railway/cli@5.30.1
 
-      - name: Link Railway production context
+      - name: Verify Railway production context
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
@@ -54,7 +54,8 @@ jobs:
             echo "::error::RAILWAY_PROJECT_ID Actions environment variable is required for the production config audit."
             exit 1
           fi
-          railway link --project "$RAILWAY_PROJECT_ID" --environment production --json
+          railway status --project "$RAILWAY_PROJECT_ID" --environment production --json > /dev/null
+          echo "Project-scoped Railway token is valid for the expected production context."
 
       - name: Audit Railway ingestion deployment controls
         env:

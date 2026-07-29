@@ -68,6 +68,44 @@ function runScheduledGate(gateState) {
   }
 }
 
+function runRailwayContext({ token = 'project-token', projectId = 'project-123' } = {}) {
+  const tempDir = mkdtempSync(join(repoRoot, '.tmp-seed-freshness-railway-'));
+  const fakeBin = join(tempDir, 'bin');
+  const fakeRailway = join(fakeBin, 'railway');
+
+  try {
+    mkdirSync(fakeBin);
+    writeFileSync(
+      fakeRailway,
+      [
+        '#!/bin/sh',
+        '[ "$RAILWAY_TOKEN" = "project-token" ] || exit 91',
+        '[ "$*" = "status --project project-123 --environment production --json" ] || exit 92',
+        "printf '{}\\n'",
+        '',
+      ].join('\n'),
+    );
+    chmodSync(fakeRailway, 0o755);
+
+    return spawnSync(
+      'bash',
+      ['-e', '-c', stepNamed('Verify Railway production context').run],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          RAILWAY_TOKEN: token,
+          RAILWAY_PROJECT_ID: projectId,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+        },
+      },
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe('seed freshness workflow control plane', () => {
   it('fails closed unless the exact checked-out main SHA has a successful gate', () => {
     const success = runScheduledGate('success');
@@ -123,8 +161,8 @@ describe('seed freshness workflow control plane', () => {
     const installIndex = monitorSteps.findIndex(
       (step) => step.name === 'Install pinned Railway CLI',
     );
-    const linkIndex = monitorSteps.findIndex(
-      (step) => step.name === 'Link Railway production context',
+    const contextIndex = monitorSteps.findIndex(
+      (step) => step.name === 'Verify Railway production context',
     );
     const auditIndex = monitorSteps.findIndex(
       (step) => step.name === 'Audit Railway ingestion deployment controls',
@@ -135,7 +173,7 @@ describe('seed freshness workflow control plane', () => {
 
     assert.ok(installIndex >= 0, 'workflow must install the Railway CLI');
     assert.ok(
-      installIndex < linkIndex && linkIndex < auditIndex && auditIndex < healthIndex,
+      installIndex < contextIndex && contextIndex < auditIndex && auditIndex < healthIndex,
       'Railway context and watch-path drift must be checked before compact health',
     );
 
@@ -145,14 +183,19 @@ describe('seed freshness workflow control plane', () => {
       'scheduled audits must use a deterministic Railway CLI version',
     );
 
-    const link = monitorSteps[linkIndex];
-    assert.equal(link.env.RAILWAY_TOKEN, '${{ secrets.RAILWAY_PRODUCTION_TOKEN }}');
-    assert.equal(link.env.RAILWAY_PROJECT_ID, '${{ vars.RAILWAY_PROJECT_ID }}');
-    assert.match(link.run, /RAILWAY_TOKEN/);
-    assert.match(link.run, /RAILWAY_PROJECT_ID/);
+    const context = monitorSteps[contextIndex];
+    assert.equal(context.env.RAILWAY_TOKEN, '${{ secrets.RAILWAY_PRODUCTION_TOKEN }}');
+    assert.equal(context.env.RAILWAY_PROJECT_ID, '${{ vars.RAILWAY_PROJECT_ID }}');
+    assert.match(context.run, /RAILWAY_TOKEN/);
+    assert.match(context.run, /RAILWAY_PROJECT_ID/);
     assert.match(
-      link.run,
-      /railway link --project "\$RAILWAY_PROJECT_ID" --environment production --json/,
+      context.run,
+      /railway status --project "\$RAILWAY_PROJECT_ID" --environment production --json > \/dev\/null/,
+    );
+    assert.doesNotMatch(
+      context.run,
+      /railway link/,
+      'project tokens resolve their own context and must not invoke account-scoped linking',
     );
 
     const audit = monitorSteps[auditIndex];
@@ -169,5 +212,21 @@ describe('seed freshness workflow control plane', () => {
       /RAILWAY_API_TOKEN/,
       'the workflow must not use an account-scoped Railway credential',
     );
+  });
+
+  it('validates the project token against the expected production context without linking', () => {
+    const success = runRailwayContext();
+    assert.equal(success.status, 0, success.stderr);
+    assert.match(success.stdout, /valid for the expected production context/);
+
+    for (const [label, options] of [
+      ['missing project token', { token: '' }],
+      ['missing project id', { projectId: '' }],
+      ['wrong project token', { token: 'wrong-token' }],
+      ['wrong project id', { projectId: 'wrong-project' }],
+    ]) {
+      const result = runRailwayContext(options);
+      assert.notEqual(result.status, 0, `${label} must fail before the Railway audit`);
+    }
   });
 });
