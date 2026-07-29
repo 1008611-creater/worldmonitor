@@ -77,6 +77,17 @@ describe('China corporate disclosure production registration (#5577)', () => {
       read('scripts/china-corporate-disclosures/adapters.mjs'),
       /proxyUrl = process\.env\.SZSE_PROXY_URL \|\| process\.env\.PROXY_URL \|\| ''/,
     );
+    const seed = read('scripts/seed-china-corporate-disclosures.mjs');
+    assert.match(
+      seed,
+      /readSnapshot\(CHINA_CORPORATE_DISCLOSURE_SZSE_FAILURE_META_KEY, \{ strict: true \}\)/,
+      'the next run must read a durable SZSE failure that could not enter the last-good snapshot',
+    );
+    assert.match(
+      seed,
+      /afterValidationSkip:\s*async \(snapshot\) =>\s*recordSzseTransportFailure\(snapshot\)/,
+      'every validation rejection must record the SZSE failure independently of last-good preservation',
+    );
     assert.match(
       read('scripts/china-coverage-manifest.mjs'),
       /id:\s*'market\.china-corporate-disclosures'[\s\S]*?ownerIssue:\s*5577[\s\S]*?launchStatus:\s*'launched'/,

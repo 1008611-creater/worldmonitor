@@ -1727,6 +1727,7 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
     preserveKeys = [],
     beforePublish,
     afterPublish,
+    afterValidationSkip,
     afterPreservedValidationSkip,
     afterFreshness,
     publishTransform,
@@ -2010,6 +2011,20 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
       const durationMs = Date.now() - startMs;
       const preserved = await extendExistingTtl(preservationKeys(), ttlSeconds || 600);
       const strictFailure = Boolean(opts.emptyDataIsFailure);
+      const validationSkipContext = {
+        canonicalKey,
+        ttlSeconds,
+        recordCount: contractRecordCount,
+        runId,
+        preservationSucceeded: preserved,
+      };
+      // Some rejected snapshots carry failure evidence that must survive even
+      // when there is no complete last-good cohort to preserve. Keep this hook
+      // in the publish phase so its persistence cannot make withRetry(fetchFn)
+      // repeat upstream source requests.
+      if (!strictFailure && afterValidationSkip) {
+        await afterValidationSkip(data, validationSkipContext);
+      }
       if (strictFailure) {
         // Strict-floor seeders (e.g. IMF-External, floor=180 countries) treat
         // empty data as a real upstream failure. Do NOT refresh seed-meta —
@@ -2065,12 +2080,7 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
         }
       }
       if (!strictFailure && preserved && afterPreservedValidationSkip) {
-        await afterPreservedValidationSkip(data, {
-          canonicalKey,
-          ttlSeconds,
-          recordCount: contractRecordCount,
-          runId,
-        });
+        await afterPreservedValidationSkip(data, validationSkipContext);
       }
       console.log(`\n=== Done (${Math.round(durationMs)}ms, no write) ===`);
       await releaseLock(`${domain}:${resource}`, runId);

@@ -21,7 +21,10 @@ import {
   resolveChinaExchangeEdgeEgress,
 } from '../scripts/china-corporate-disclosures/adapters.mjs';
 import {
+  CHINA_CORPORATE_DISCLOSURE_SZSE_FAILURE_META_KEY,
+  buildChinaCorporateDisclosureSeedSnapshot,
   chinaCorporateDisclosureContentMeta,
+  recordSzseTransportFailure,
   validateChinaCorporateDisclosureSnapshot,
 } from '../scripts/seed-china-corporate-disclosures.mjs';
 
@@ -76,6 +79,7 @@ describe('official China corporate disclosures (#5577)', () => {
     }
 
     const hkex = OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.hkex;
+    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.transportRecoverySuccessRuns, 2);
     assert.equal(hkex.preflight.reachable, true);
     assert.equal(hkex.admissionDecision, 'rejected');
     assert.equal(hkex.blockedReason, 'TERMS_PROHIBIT_AUTOMATED_ACCESS');
@@ -540,6 +544,254 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.equal(validateChinaCorporateDisclosureSnapshot(totalOutage), false);
   });
 
+  it('requires two consecutive successful runs before transport recovery is stable', async () => {
+    const announcements = {
+      sse: normalizeSseAnnouncements(fixture('sse.json'), { retrievedAt }),
+      szse: normalizeSzseAnnouncements(fixture('szse.json'), { retrievedAt }),
+    };
+    const successfulOutcomes = [
+      {
+        sourceId: 'sse',
+        ok: true,
+        transportOk: true,
+        requestCount: 4,
+        announcements: announcements.sse,
+      },
+      {
+        sourceId: 'szse',
+        ok: true,
+        transportOk: true,
+        requestCount: 2,
+        transportPath: 'proxy',
+        fallbackReason: 'ETIMEDOUT',
+        announcements: announcements.szse,
+      },
+    ];
+    const healthy = buildChinaCorporateDisclosureSnapshot({
+      generatedAt: retrievedAt,
+      outcomes: successfulOutcomes,
+    });
+    const failedAt = '2026-07-25T10:30:00.000Z';
+    const failed = buildChinaCorporateDisclosureSnapshot({
+      generatedAt: failedAt,
+      previousSnapshot: healthy,
+      outcomes: [
+        successfulOutcomes[0],
+        {
+          sourceId: 'szse',
+          ok: false,
+          requestCount: 3,
+          errorCode: 'HTTP_522',
+          transportPath: 'proxy',
+          fallbackReason: 'ETIMEDOUT',
+          proxyFailureReason: 'HTTP_522',
+        },
+      ],
+    });
+    const recoveryFetch = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('query.sse.com.cn')) {
+        const productId = new URL(url).searchParams.get('productId');
+        return new Response(JSON.stringify(
+          productId === '600519'
+            ? fixture('sse.json')
+            : { pageHelp: { pageNo: 1, pageSize: 100, total: 0 }, result: [] },
+        ), { status: 200 });
+      }
+      return new Response(JSON.stringify(fixture('szse.json')), { status: 200 });
+    };
+    const legacyFailed = structuredClone(failed);
+    for (const source of legacyFailed.sources) {
+      delete source.transportReliability;
+    }
+    const legacyRecovery = buildChinaCorporateDisclosureSnapshot({
+      generatedAt: '2026-07-25T10:45:00.000Z',
+      previousSnapshot: legacyFailed,
+      outcomes: successfulOutcomes,
+    });
+    assert.equal(
+      legacyRecovery.sources.find((source) => source.id === 'szse')
+        ?.transportReliability.status,
+      'recovering',
+    );
+    const firstRecoveryAt = '2026-07-25T11:00:00.000Z';
+    const firstRecoveryDecisions: Array<Record<string, unknown>> = [];
+    const firstRecovery = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse(firstRecoveryAt),
+      previousSnapshot: healthy,
+      previousTransportFailures: {
+        szse: {
+          checkedAt: failedAt,
+          errorCode: 'HTTP_522',
+        },
+      },
+      fetchFn: recoveryFetch,
+      onDecision: (decision) => firstRecoveryDecisions.push(decision),
+    });
+    const firstRecoverySzse = firstRecovery.sources.find((source) => source.id === 'szse');
+
+    assert.equal(firstRecovery.status, 'degraded');
+    assert.equal(firstRecovery.coverageThrough, null);
+    assert.equal(firstRecoverySzse?.transportStatus, 'fresh');
+    assert.equal(firstRecoverySzse?.contentStatus, 'current');
+    assert.deepEqual(firstRecoverySzse?.transportReliability, {
+      status: 'recovering',
+      consecutiveSuccesses: 1,
+      consecutiveFailures: 0,
+      lastFailureAt: failedAt,
+      lastFailureReason: 'HTTP_522',
+    });
+    assert.deepEqual(
+      firstRecoveryDecisions.find((decision) => decision.sourceId === 'szse'),
+      {
+        sourceId: 'szse',
+        status: 'degraded',
+        requestCount: 1,
+        reason: 'TRANSPORT_RECOVERING',
+        emptyResultCount: 0,
+        transportPath: 'direct',
+        reliabilityStatus: 'recovering',
+        requiredRecoverySuccesses: 2,
+        consecutiveTransportSuccesses: 1,
+        consecutiveTransportFailures: 0,
+        lastTransportFailureAt: failedAt,
+        lastTransportFailureReason: 'HTTP_522',
+        checkedAt: firstRecoveryAt,
+      },
+    );
+
+    const secondRecoveryAt = '2026-07-25T11:30:00.000Z';
+    const secondRecoveryDecisions: Array<Record<string, unknown>> = [];
+    const secondRecovery = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse(secondRecoveryAt),
+      previousSnapshot: firstRecovery,
+      fetchFn: recoveryFetch,
+      onDecision: (decision) => secondRecoveryDecisions.push(decision),
+    });
+    const stableSzse = secondRecovery.sources.find((source) => source.id === 'szse');
+
+    assert.equal(secondRecovery.status, 'healthy');
+    assert.equal(secondRecovery.coverageThrough, secondRecoveryAt.slice(0, 10));
+    assert.deepEqual(stableSzse?.transportReliability, {
+      status: 'stable',
+      consecutiveSuccesses: 2,
+      consecutiveFailures: 0,
+      lastFailureAt: failedAt,
+      lastFailureReason: 'HTTP_522',
+    });
+    assert.deepEqual(
+      secondRecoveryDecisions.find((decision) => decision.sourceId === 'szse'),
+      {
+        sourceId: 'szse',
+        status: 'accepted',
+        requestCount: 1,
+        emptyResultCount: 0,
+        transportPath: 'direct',
+        reliabilityStatus: 'stable',
+        requiredRecoverySuccesses: 2,
+        consecutiveTransportSuccesses: 2,
+        consecutiveTransportFailures: 0,
+        lastTransportFailureAt: failedAt,
+        lastTransportFailureReason: 'HTTP_522',
+        checkedAt: secondRecoveryAt,
+      },
+    );
+  });
+
+  it('persists and replays an SZSE failure rejected by last-good validation', async () => {
+    const failedAt = '2026-07-25T10:30:00.000Z';
+    const writeCalls: unknown[][] = [];
+    const recorded = await recordSzseTransportFailure(
+      {
+        sources: [{
+          id: 'szse',
+          transportStatus: 'error',
+          checkedAt: failedAt,
+          errorCode: 'HTTP_522',
+        }],
+      },
+      async (...args: unknown[]) => {
+        writeCalls.push(args);
+      },
+    );
+
+    assert.equal(recorded, true);
+    assert.deepEqual(writeCalls, [[
+      'market',
+      'china-corporate-disclosures-szse-failure',
+      0,
+      'china-official-exchange-szse-failure-v1',
+      259_200,
+      Date.parse(failedAt),
+      null,
+      { errorCode: 'HTTP_522', consecutiveFailures: 1 },
+    ]]);
+    assert.equal(
+      await recordSzseTransportFailure(
+        { sources: [{ id: 'szse', transportStatus: 'fresh' }] },
+        async () => {
+          throw new Error('writer must not run for a successful source');
+        },
+      ),
+      false,
+    );
+    assert.equal(
+      CHINA_CORPORATE_DISCLOSURE_SZSE_FAILURE_META_KEY,
+      'seed-meta:market:china-corporate-disclosures-szse-failure',
+    );
+
+    const previousSnapshot = { schemaVersion: 1, sources: [] };
+    const reads: Array<[string, { strict: boolean }]> = [];
+    let fetchInput: Record<string, unknown> | undefined;
+    const result = await buildChinaCorporateDisclosureSeedSnapshot({
+      readSnapshot: async (key: string, options: { strict: boolean }) => {
+        reads.push([key, options]);
+        return key === CHINA_CORPORATE_DISCLOSURE_KEY
+          ? previousSnapshot
+          : {
+              fetchedAt: Date.parse(failedAt),
+              errorCode: 'HTTP_522',
+              consecutiveFailures: 3,
+            };
+      },
+      fetchSnapshot: async (input: Record<string, unknown>) => {
+        fetchInput = input;
+        return { status: 'degraded' };
+      },
+    });
+
+    assert.deepEqual(result, { status: 'degraded' });
+    assert.deepEqual(reads, [
+      [CHINA_CORPORATE_DISCLOSURE_KEY, { strict: true }],
+      [CHINA_CORPORATE_DISCLOSURE_SZSE_FAILURE_META_KEY, { strict: true }],
+    ]);
+    assert.deepEqual(fetchInput, {
+      previousSnapshot,
+      previousTransportFailures: {
+        szse: {
+          checkedAt: failedAt,
+          errorCode: 'HTTP_522',
+          consecutiveFailures: 3,
+        },
+      },
+    });
+
+    const continuedOutage = buildChinaCorporateDisclosureSnapshot({
+      generatedAt: '2026-07-25T11:00:00.000Z',
+      previousSnapshot,
+      previousTransportFailures: fetchInput?.previousTransportFailures,
+      outcomes: [
+        { sourceId: 'sse', ok: false, requestCount: 4, errorCode: 'TIMEOUT' },
+        { sourceId: 'szse', ok: false, requestCount: 4, errorCode: 'HTTP_522' },
+      ],
+    });
+    assert.equal(
+      continuedOutage.sources.find((source) => source.id === 'szse')
+        ?.transportReliability.consecutiveFailures,
+      4,
+    );
+  });
+
   it('degrades consecutive empty source results and resets the counter after observed disclosures', async () => {
     assert.equal(EMPTY_RESULT_DEGRADE_AFTER, 3);
     const emptyOutcomes = [
@@ -871,6 +1123,10 @@ describe('official China corporate disclosures (#5577)', () => {
       emptyResultCount: 0,
       transportPath: 'proxy',
       fallbackReason: 'UND_ERR_CONNECT_TIMEOUT',
+      reliabilityStatus: 'stable',
+      requiredRecoverySuccesses: 2,
+      consecutiveTransportSuccesses: 1,
+      consecutiveTransportFailures: 0,
       checkedAt: retrievedAt,
     });
     assert.doesNotMatch(JSON.stringify(decisions), /proxy-user|proxy-secret/);
@@ -948,6 +1204,10 @@ describe('official China corporate disclosures (#5577)', () => {
           emptyResultCount: 0,
           transportPath: 'proxy',
           fallbackReason: 'ETIMEDOUT',
+          reliabilityStatus: 'stable',
+          requiredRecoverySuccesses: 2,
+          consecutiveTransportSuccesses: 1,
+          consecutiveTransportFailures: 0,
           checkedAt: retrievedAt,
         },
       );
@@ -1042,6 +1302,10 @@ describe('official China corporate disclosures (#5577)', () => {
         transportPath: 'edge',
         fallbackReason: 'ETIMEDOUT',
         proxyFailureReason: 'HTTP_522',
+        reliabilityStatus: 'stable',
+        requiredRecoverySuccesses: 2,
+        consecutiveTransportSuccesses: 1,
+        consecutiveTransportFailures: 0,
         checkedAt: retrievedAt,
       },
     );
@@ -1206,6 +1470,13 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.equal(szse?.proxyFailureReason, 'EAI_AGAIN');
     assert.equal(szse?.edgeFailureReason, 'upstream_fetch_failed');
     assert.equal(szse?.errorCode, 'upstream_fetch_failed');
+    assert.deepEqual(szse?.transportReliability, {
+      status: 'degraded',
+      consecutiveSuccesses: 0,
+      consecutiveFailures: 1,
+      lastFailureAt: degradedAt,
+      lastFailureReason: 'upstream_fetch_failed',
+    });
     assert.deepEqual(
       decisions.find((decision) => decision.sourceId === 'szse'),
       {
@@ -1218,6 +1489,12 @@ describe('official China corporate disclosures (#5577)', () => {
         fallbackReason: 'ECONNRESET',
         proxyFailureReason: 'EAI_AGAIN',
         edgeFailureReason: 'upstream_fetch_failed',
+        reliabilityStatus: 'degraded',
+        requiredRecoverySuccesses: 2,
+        consecutiveTransportSuccesses: 0,
+        consecutiveTransportFailures: 1,
+        lastTransportFailureAt: degradedAt,
+        lastTransportFailureReason: 'upstream_fetch_failed',
         checkedAt: degradedAt,
       },
     );
