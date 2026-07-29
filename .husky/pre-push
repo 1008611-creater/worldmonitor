@@ -28,8 +28,8 @@ if [ -z "${WM_ALLOW_FOREIGN_HOOKS:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ]; then
   fi
 fi
 
-echo "Checking for local Vercel env dumps..."
-node scripts/check-local-secret-dumps.mjs || exit 1
+echo "Checking for local environment dumps..."
+node scripts/check-local-secret-dumps.mjs --pre-push "${1:-}" || exit 1
 
 echo "Checking Vite-prefixed environment variables..."
 node scripts/check-vite-env-secrets.mjs || exit 1
