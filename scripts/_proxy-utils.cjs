@@ -4,6 +4,11 @@ const net = require('node:net');
 const tls = require('node:tls');
 const https = require('node:https');
 const zlib = require('node:zlib');
+
+const DECODO_GATE_HOST = 'gate.decodo.com';
+const DECODO_STICKY_PORT_MIN = 10_001;
+const DECODO_STICKY_PORT_MAX = 49_999;
+
 function parseProxyConfig(raw) {
   if (!raw) return null;
 
@@ -45,6 +50,32 @@ function parseProxyConfig(raw) {
   }
 
   return null;
+}
+
+/**
+ * Parse a proxy configuration and, for Decodo sticky gateway ports, advance
+ * each retry to a distinct sticky session. Other providers and Decodo rotating
+ * ports retain their configured route exactly.
+ */
+function parseProxyConfigForAttempt(raw, attempt = 0) {
+  const config = parseProxyConfig(raw);
+  if (!config) return null;
+  const port = Number(config.port);
+  if (
+    config.host !== DECODO_GATE_HOST
+    || !Number.isInteger(port)
+    || port < DECODO_STICKY_PORT_MIN
+    || port > DECODO_STICKY_PORT_MAX
+  ) {
+    return config;
+  }
+
+  const stickyPortCount = DECODO_STICKY_PORT_MAX - DECODO_STICKY_PORT_MIN + 1;
+  return {
+    ...config,
+    port: DECODO_STICKY_PORT_MIN
+      + ((port - DECODO_STICKY_PORT_MIN + attempt) % stickyPortCount),
+  };
 }
 
 /**
@@ -267,6 +298,7 @@ function proxyFetch(url, proxyConfig, {
 
 module.exports = {
   parseProxyConfig,
+  parseProxyConfigForAttempt,
   resolveProxyConfig,
   resolveProxyConfigWithFallback,
   resolveProxyString,

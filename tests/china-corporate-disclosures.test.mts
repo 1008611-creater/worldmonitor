@@ -1214,6 +1214,46 @@ describe('official China corporate disclosures (#5577)', () => {
     }
   });
 
+  it('uses a distinct Decodo sticky gateway port for each proxy attempt', async () => {
+    const proxyPorts: number[] = [];
+    const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse(retrievedAt),
+      previousSnapshot: null,
+      proxyUrl: 'gate.decodo.com:10001:proxy-user:proxy-secret',
+      onDecision: () => {},
+      fetchFn: async (input) => {
+        const url = String(input);
+        if (url.includes('query.sse.com.cn')) {
+          return new Response(JSON.stringify({
+            pageHelp: { pageNo: 1, pageSize: 100, total: 0 },
+            result: [],
+          }), { status: 200 });
+        }
+        throw Object.assign(new TypeError('fetch failed'), {
+          cause: Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' }),
+        });
+      },
+      proxyRequestFn: async (_input, proxyConfig) => {
+        proxyPorts.push(proxyConfig.port);
+        if (proxyPorts.length === 1) {
+          throw Object.assign(new Error('Proxy upstream timeout'), { status: 522 });
+        }
+        return {
+          buffer: Buffer.from(JSON.stringify(fixture('szse.json'))),
+          status: 200,
+          contentType: 'application/json',
+        };
+      },
+    });
+
+    assert.deepEqual(proxyPorts, [10001, 10002]);
+    const szse = snapshot.sources.find((source) => source.id === 'szse');
+    assert.equal(szse?.transportStatus, 'fresh');
+    assert.equal(szse?.requestCount, 3);
+    assert.equal(szse?.transportPath, 'proxy');
+    assert.doesNotMatch(JSON.stringify(snapshot), /proxy-user|proxy-secret/);
+  });
+
   it('uses the authenticated edge egress after direct and proxy transports are exhausted', async () => {
     let proxyCalls = 0;
     const edgeCalls: Array<{ url: string; init?: RequestInit }> = [];
@@ -1395,6 +1435,58 @@ describe('official China corporate disclosures (#5577)', () => {
         testCase.name,
       );
     }
+  });
+
+  it('logs bounded edge routing identifiers without persisting the response body', async () => {
+    const decisions: Array<Record<string, unknown>> = [];
+    const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse(retrievedAt),
+      previousSnapshot: null,
+      proxyUrl: '',
+      edgeEgress: {
+        url: 'https://api.example.test/api/internal/china-exchange-egress',
+        secret: 'edge-relay-secret',
+      },
+      onDecision: (decision) => decisions.push(decision),
+      fetchFn: async (input) => {
+        const url = String(input);
+        if (url.includes('query.sse.com.cn')) {
+          return new Response(JSON.stringify({
+            pageHelp: { pageNo: 1, pageSize: 100, total: 0 },
+            result: [],
+          }), { status: 200 });
+        }
+        throw Object.assign(new TypeError('fetch failed'), {
+          cause: Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' }),
+        });
+      },
+      edgeRequestFn: async () => new Response(
+        '<html>intermediary-response-secret</html>',
+        {
+          status: 502,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'CF-Ray': 'abc123def456-CDG',
+            'Server': 'cloudflare',
+            'X-Vercel-Id': 'iad1::sfo1::request_123',
+          },
+        },
+      ),
+    });
+
+    const szseDecision = decisions.find((decision) => decision.sourceId === 'szse');
+    assert.deepEqual(szseDecision?.edgeFailureDiagnostic, {
+      contentType: 'text/html',
+      server: 'cloudflare',
+      cfRay: 'abc123def456-CDG',
+      vercelId: 'iad1::sfo1::request_123',
+    });
+    const szse = snapshot.sources.find((source) => source.id === 'szse');
+    assert.equal('edgeFailureDiagnostic' in (szse ?? {}), false);
+    assert.doesNotMatch(
+      JSON.stringify({ snapshot, decisions }),
+      /edge-relay-secret|intermediary-response-secret/,
+    );
   });
 
   it('retains last-good SZSE data and all transport reasons after edge failure', async () => {

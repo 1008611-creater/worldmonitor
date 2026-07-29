@@ -6,7 +6,7 @@ import {
 } from '../shared/china-corporate-disclosure-policy.js';
 
 const {
-  parseProxyConfig,
+  parseProxyConfigForAttempt,
   proxyFetch,
 } = createRequire(import.meta.url)('../_proxy-utils.cjs');
 
@@ -516,10 +516,11 @@ function shouldRetrySzseProxyFailure(error) {
 
 async function fetchViaConfiguredProxy(input, init, {
   proxyUrl,
+  attempt,
   maxBytes,
   proxyRequestFn,
 }) {
-  const proxyConfig = parseProxyConfig(proxyUrl);
+  const proxyConfig = parseProxyConfigForAttempt(proxyUrl, attempt);
   if (!proxyConfig) throw sourceError('PROXY_NOT_CONFIGURED');
   // init.headers carries the same Referer/User-Agent/Content-Type the direct
   // request used (requestInit() below), deliberately: we're routing the exact
@@ -556,21 +557,60 @@ export function resolveChinaExchangeEdgeEgress(env = process.env) {
   return { url: CHINA_EXCHANGE_EDGE_EGRESS_URL, secret };
 }
 
-async function readEdgeEgressFailureCode(response, maxBytes) {
+function normalizedResponseContentType(response) {
+  return String(response?.headers?.get?.('content-type') || '')
+    .split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+}
+
+function edgeFailureDiagnostic(response, rawContentType = normalizedResponseContentType(response)) {
+  const cfRay = String(response?.headers?.get?.('cf-ray') || '');
+  const vercelId = String(response?.headers?.get?.('x-vercel-id') || '');
+  const rawServer = String(response?.headers?.get?.('server') || '').toLowerCase();
+  const server = rawServer === 'cloudflare' || rawServer === 'vercel'
+    ? rawServer
+    : null;
+  const safeCfRay = /^[a-f0-9]{8,32}-[A-Z]{3}$/u.test(cfRay) ? cfRay : null;
+  const safeVercelId = /^[A-Za-z0-9:_-]{1,96}$/u.test(vercelId) ? vercelId : null;
+  if (!server && !safeCfRay && !safeVercelId) return null;
+
+  const contentType = ['application/json', 'text/html', 'text/plain'].includes(rawContentType)
+    ? rawContentType
+    : rawContentType
+      ? 'other'
+      : 'missing';
+  return {
+    contentType,
+    ...(server ? { server } : {}),
+    ...(safeCfRay ? { cfRay: safeCfRay } : {}),
+    ...(safeVercelId ? { vercelId: safeVercelId } : {}),
+  };
+}
+
+async function readEdgeEgressFailure(response, maxBytes) {
   const fallback = `HTTP_${Number(response?.status) || 0}`;
+  const contentType = normalizedResponseContentType(response);
+  const diagnostic = edgeFailureDiagnostic(response, contentType);
+  if (contentType !== 'application/json') {
+    try {
+      await response?.body?.cancel?.();
+    } catch {
+      // A diagnostic must never fail because an intermediary body could not be cancelled.
+    }
+    return { code: fallback, diagnostic };
+  }
   try {
     const bytes = await readBoundedResponseBytes(response, maxBytes);
-    const contentType = String(response?.headers?.get?.('content-type') || '')
-      .split(';', 1)[0]
-      .trim()
-      .toLowerCase();
-    if (contentType !== 'application/json') return fallback;
     const payload = JSON.parse(new TextDecoder().decode(bytes));
-    return CHINA_EXCHANGE_EDGE_ERROR_CODES.has(payload?.error)
-      ? payload.error
-      : fallback;
+    return {
+      code: CHINA_EXCHANGE_EDGE_ERROR_CODES.has(payload?.error)
+        ? payload.error
+        : fallback,
+      diagnostic,
+    };
   } catch {
-    return fallback;
+    return { code: fallback, diagnostic };
   }
 }
 
@@ -591,7 +631,10 @@ async function fetchViaEdgeEgress(_input, init, {
     signal: init?.signal,
   });
   if (!response.ok) {
-    throw sourceError(await readEdgeEgressFailureCode(response, maxBytes));
+    const failure = await readEdgeEgressFailure(response, maxBytes);
+    const error = sourceError(failure.code);
+    if (failure.diagnostic) error.edgeFailureDiagnostic = failure.diagnostic;
+    throw error;
   }
   const bytes = await readBoundedResponseBytes(response, maxBytes);
   return new Response(bytes, {
@@ -731,7 +774,10 @@ async function fetchSzseAnnouncements(fetchFn, now, {
       for (let attempt = 0; attempt < contract.maxProxyRequestsPerRun; attempt += 1) {
         requestCount += 1;
         try {
-          fetched = await request(proxyFetchFn, SZSE_PROXY_TIMEOUT_MS);
+          fetched = await request(
+            (input, init) => proxyFetchFn(input, init, attempt),
+            SZSE_PROXY_TIMEOUT_MS,
+          );
           proxyError = null;
           break;
         } catch (error) {
@@ -761,6 +807,9 @@ async function fetchSzseAnnouncements(fetchFn, now, {
         failure.fallbackReason = fallbackReason;
         if (proxyFailureReason) failure.proxyFailureReason = proxyFailureReason;
         failure.edgeFailureReason = transportFailureReason(edgeError);
+        if (edgeError?.edgeFailureDiagnostic) {
+          failure.edgeFailureDiagnostic = edgeError.edgeFailureDiagnostic;
+        }
         throw failure;
       }
     }
@@ -1450,8 +1499,9 @@ export async function fetchChinaCorporateDisclosureSnapshot({
   onDecision = (entry) => console.log(JSON.stringify({ event: 'china_corporate_disclosure_source', ...entry })),
 } = {}) {
   const resolvedProxyFetchFn = proxyUrl
-    ? (input, init) => fetchViaConfiguredProxy(input, init, {
+    ? (input, init, attempt = 0) => fetchViaConfiguredProxy(input, init, {
         proxyUrl,
+        attempt,
         maxBytes: OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxResponseBytes,
         proxyRequestFn,
       })
@@ -1492,6 +1542,9 @@ export async function fetchChinaCorporateDisclosureSnapshot({
         ...(error?.edgeFailureReason
           ? { edgeFailureReason: error.edgeFailureReason }
           : {}),
+        ...(error?.edgeFailureDiagnostic
+          ? { edgeFailureDiagnostic: error.edgeFailureDiagnostic }
+          : {}),
       };
       outcomes.push(outcome);
     }
@@ -1502,7 +1555,9 @@ export async function fetchChinaCorporateDisclosureSnapshot({
     previousTransportFailures,
     generatedAt: new Date(now).toISOString(),
   });
+  const outcomeMap = new Map(outcomes.map((outcome) => [outcome.sourceId, outcome]));
   for (const source of snapshot.sources) {
+    const outcome = outcomeMap.get(source.id);
     const transportRecoverySuccessRuns = source.launchStatus === 'launched'
       ? OFFICIAL_EXCHANGE_SOURCE_CONTRACTS[source.id].transportRecoverySuccessRuns ?? 1
       : null;
@@ -1534,6 +1589,9 @@ export async function fetchChinaCorporateDisclosureSnapshot({
         : {}),
       ...(source.edgeFailureReason
         ? { edgeFailureReason: source.edgeFailureReason }
+        : {}),
+      ...(outcome?.edgeFailureDiagnostic
+        ? { edgeFailureDiagnostic: outcome.edgeFailureDiagnostic }
         : {}),
       ...(source.launchStatus === 'launched'
         ? {
