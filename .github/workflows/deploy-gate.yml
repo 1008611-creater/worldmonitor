@@ -34,7 +34,16 @@ jobs:
           SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -o pipefail
-          required='["changes","docs-stats","unit","consumer-prices","sidecar","convex-tests","dom-tests","variant-smoke-full","resilience-validation-smoke","digest-image","typecheck","biome","public-docs","security-audit"]'
+          # Every job of every workflow named in the workflow_run trigger above.
+          # A job missing here is never inspected, so it reports red on the PR
+          # while this gate still posts success — CI theatre, not a gate (#5402).
+          # tests/ci-workflow-coverage.test.mts fails when this list and those
+          # workflows drift apart in either direction. `audit-lockfile` is
+          # deliberately absent: it is a matrix job whose check runs are named
+          # `audit-lockfile (root)`, `audit-lockfile (scripts)`, … so a bare
+          # entry would wait on a check run that is never published; the
+          # always()-running `security-audit` aggregate blocks for it instead.
+          required='["changes","docs-stats","unit","consumer-prices","sidecar","convex-tests","dom-tests","variant-smoke-full","resilience-validation-smoke","digest-image","typecheck","biome","public-docs","mintlify-slugs","security-audit"]'
 
           if [ -n "$SHA" ]; then
             # workflow_run event — evaluate exactly the triggering SHA.

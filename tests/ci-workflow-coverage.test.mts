@@ -56,6 +56,22 @@ const REQUIRED_NON_TEST_GATE_CHECKS = [
   'security-audit',
 ] as const;
 
+// Jobs the deploy gate cannot require under their own name, and the check that
+// blocks on their behalf instead. A matrix job publishes one check run per
+// matrix entry (`audit-lockfile (root)`, `audit-lockfile (scripts)`, …) and
+// never the bare job id, so listing the id in `required` would leave the gate
+// waiting on a check run that is never published — pending forever, which
+// deadlocks every PR. The `if: always()` aggregate job publishes the single
+// blocking check for the whole matrix instead.
+//
+// An entry here is honoured only when both halves still hold: the job's `name:`
+// is a template expression (so it structurally cannot be matched by id), and
+// the covering check is itself a required gate check. That keeps this table
+// from becoming a way to quietly drop a job out of the gate.
+const GATE_CHECK_EXEMPTIONS: Record<string, { workflow: string; coveredBy: string }> = {
+  'audit-lockfile': { workflow: 'Security Audit', coveredBy: 'security-audit' },
+};
+
 const REQUIRED_RESILIENCE_VALIDATION_INPUTS = [
   'Dockerfile.seed-bundle-resilience-validation',
   'docs/methodology/country-resilience-index/validation/',
@@ -86,11 +102,11 @@ function workflowJobBlock(workflow: string, job: string): string {
   return match[0];
 }
 
-function testWorkflowJobNames(): string[] {
+function workflowJobNames(workflow: string, label: string): string[] {
   const jobs: string[] = [];
   let inJobs = false;
 
-  for (const line of testWorkflow.split('\n')) {
+  for (const line of workflow.split('\n')) {
     if (/^jobs:\s*$/.test(line)) {
       inJobs = true;
       continue;
@@ -104,8 +120,50 @@ function testWorkflowJobNames(): string[] {
     }
   }
 
-  assert.ok(jobs.length > 0, 'test.yml must define at least one job under jobs:');
+  assert.ok(jobs.length > 0, `${label} must define at least one job under jobs:`);
   return jobs;
+}
+
+// Maps a workflow's display name (`name:` at column 0) to its source, so the
+// gate checks below key off the same names deploy-gate.yml's `workflow_run`
+// trigger uses rather than a hand-maintained name-to-filename table.
+//
+// Two workflows sharing a display name would make this map silently keep one
+// and drop the other, so the checks below could pass while the dropped
+// workflow's jobs gate nothing. `workflow_run` matches by name too, so the
+// ambiguity is real for the gate, not just for this test — fail on it here.
+function gatedWorkflowSources(): Map<string, string> {
+  const byName = new Map<string, string>();
+  const filesByName = new Map<string, string>();
+
+  for (const file of readdirSync(workflowsDir).filter((n) => n.endsWith('.yml') || n.endsWith('.yaml'))) {
+    const source = read(resolve(workflowsDir, file));
+    const name = source.match(/^name:\s*(.+)$/m)?.[1]?.trim().replace(/^['"]|['"]$/g, '');
+    if (!name) continue;
+
+    assert.ok(
+      !filesByName.has(name),
+      `workflows must have unique names; ${filesByName.get(name)} and ${file} are both named "${name}", so workflow_run and the deploy gate cannot tell them apart`,
+    );
+    filesByName.set(name, file);
+    byName.set(name, source);
+  }
+
+  return byName;
+}
+
+// The check-run name GitHub publishes for a job: its `name:` override when it
+// has one, otherwise the job id. A `name:` containing a `${{ … }}` expression
+// (matrix fan-out) resolves per matrix entry, so no single literal name exists
+// for the gate to match.
+function effectiveCheckName(workflow: string, job: string): { name: string; templated: boolean } {
+  const nameOverride = workflowJobBlock(workflow, job).match(/^ {4}name:\s*(.+)$/m)?.[1];
+  if (!nameOverride) {
+    return { name: job, templated: false };
+  }
+
+  const value = nameOverride.trim().replace(/^['"]|['"]$/g, '');
+  return { name: value, templated: value.includes('${{') };
 }
 
 function parseJsonArrayLiteral(source: string, regex: RegExp, label: string): string[] {
@@ -188,7 +246,7 @@ describe('CI workflow coverage', () => {
         `deploy-gate.yml must run after ${workflowName} completes`,
       );
     }
-    for (const job of testWorkflowJobNames()) {
+    for (const job of workflowJobNames(testWorkflow, 'test.yml')) {
       assert.ok(
         requiredChecks.includes(job),
         `deploy-gate.yml must require every test.yml job; missing ${job}`,
@@ -206,6 +264,86 @@ describe('CI workflow coverage', () => {
       deployGateWorkflow,
       /unit \+ typecheck/i,
       'deploy-gate.yml must not regress to the old unit+typecheck-only gate',
+    );
+  });
+
+  // #5402: `sidecar` runs in CI but is not one of branch protection's four
+  // required contexts (biome, typecheck, unit, gate). It blocks merge anyway,
+  // because the required `gate` context aggregates it — but only because
+  // someone remembered to list it. Nothing forced that, and the same omission
+  // is invisible for every other job: a job absent from `required` is simply
+  // never inspected, so it reports red on the PR and the gate still goes green.
+  // The check below covers every workflow the gate aggregates, not just
+  // test.yml, so a new job cannot land in an advisory-only state.
+  it('requires every job of every workflow the deploy gate aggregates', () => {
+    const requiredChecks = deployGateRequiredChecks();
+    const sources = gatedWorkflowSources();
+    const advisoryOnly: string[] = [];
+
+    for (const workflowName of REQUIRED_GATE_WORKFLOWS) {
+      const source = sources.get(workflowName);
+      assert.ok(source, `a workflow named ${workflowName} must exist for the deploy gate to aggregate it`);
+
+      for (const job of workflowJobNames(source, workflowName)) {
+        const { name, templated } = effectiveCheckName(source, job);
+        const exemption = GATE_CHECK_EXEMPTIONS[job];
+
+        if (exemption && exemption.workflow === workflowName) {
+          assert.ok(
+            templated,
+            `${workflowName}/${job} is exempt from the gate only because its check-run name is templated, but it publishes the literal name ${name} — require it directly instead`,
+          );
+          assert.ok(
+            requiredChecks.includes(exemption.coveredBy),
+            `${workflowName}/${job} is exempt because ${exemption.coveredBy} blocks on its behalf, so ${exemption.coveredBy} must itself be a required gate check`,
+          );
+          continue;
+        }
+
+        assert.ok(
+          !templated,
+          `${workflowName}/${job} publishes a per-matrix check-run name (${name}) that the gate cannot match, and has no GATE_CHECK_EXEMPTIONS entry naming the aggregate that covers it`,
+        );
+
+        if (!requiredChecks.includes(name)) {
+          advisoryOnly.push(`${workflowName}/${name}`);
+        }
+      }
+    }
+
+    assert.deepEqual(
+      advisoryOnly,
+      [],
+      `deploy-gate.yml must require every job of every workflow it aggregates. These run in CI but a red result does not block merge (#5402): ${advisoryOnly.join(', ')}`,
+    );
+  });
+
+  // The mirror-image failure of the check above, and the more disruptive one:
+  // a `required` entry that no job publishes never resolves, so the gate holds
+  // at "Waiting for required PR gates" on every PR until someone edits the
+  // workflow. Renaming or deleting a gated job must fail here, not in the queue.
+  it('keeps the deploy gate required list free of checks no gated workflow publishes', () => {
+    const sources = gatedWorkflowSources();
+    const published = new Set<string>();
+
+    for (const workflowName of REQUIRED_GATE_WORKFLOWS) {
+      const source = sources.get(workflowName);
+      assert.ok(source, `a workflow named ${workflowName} must exist for the deploy gate to aggregate it`);
+
+      for (const job of workflowJobNames(source, workflowName)) {
+        const { name, templated } = effectiveCheckName(source, job);
+        if (!templated) {
+          published.add(name);
+        }
+      }
+    }
+
+    const phantom = deployGateRequiredChecks().filter((check) => !published.has(check));
+
+    assert.deepEqual(
+      phantom,
+      [],
+      `deploy-gate.yml requires checks no gated workflow publishes, so the gate can never leave "pending": ${phantom.join(', ')}`,
     );
   });
 
