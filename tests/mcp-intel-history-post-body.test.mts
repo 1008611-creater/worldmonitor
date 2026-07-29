@@ -62,9 +62,9 @@ function rpcTool(name: string) {
 describe('MCP intel-history request privacy contract (#5741)', () => {
   it('POSTs analyst text in the signed JSON body and never in the request URL', async () => {
     for (const testCase of cases) {
-      let captured: { url: string; init: RequestInit } | undefined;
+      const requests: Array<{ url: string; init: RequestInit }> = [];
       globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
-        captured = { url: String(input), init };
+        requests.push({ url: String(input), init });
         return new Response(JSON.stringify({
           records: [],
           [testCase.textField]: testCase.sensitiveText,
@@ -83,6 +83,12 @@ describe('MCP intel-history request privacy contract (#5741)', () => {
         {},
       );
 
+      assert.equal(
+        requests.length,
+        1,
+        `${testCase.toolName} must make exactly one outbound request`,
+      );
+      const [captured] = requests;
       assert.ok(captured, `${testCase.toolName} must make an outbound request`);
       const url = new URL(captured.url);
       assert.equal(url.pathname, testCase.path);
