@@ -24,9 +24,7 @@ import { MobilePanelNav } from '@/components/MobilePanelNav';
 import { debounce, loadFromStorage, saveToStorage } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
 import {
-  FEEDS,
   CANONICAL_FEEDS,
-  INTEL_SOURCES,
   STORAGE_KEYS,
   SITE_VARIANT,
   ALL_PANELS,
@@ -36,7 +34,6 @@ import {
   isPanelEntitled,
   enforceFreePanelLimit,
 } from '@/config';
-import { resolveNewsCategories, enabledNewsCategoryKeys } from '@/config/feed-resolution';
 import { BETA_MODE } from '@/config/beta';
 import { t } from '@/services/i18n';
 import { getCurrentTheme } from '@/utils';
@@ -683,6 +680,10 @@ export class PanelLayoutManager implements AppModule {
     for (const key of Object.keys(this.ctx.newsPanels)) {
       delete this.ctx.newsPanels[key];
     }
+    // lazyPanelRegistrations was cleared above, so the category→panel-key registry
+    // must reset too: a re-init re-registers from scratch and would otherwise skip
+    // recording keys it believes are already mapped.
+    this.ctx.newsCategoryPanelKeys.clear();
 
     // Clean up billing subscription watch + entitlement subscription
     destroySubscriptionWatch();
@@ -1533,15 +1534,28 @@ export class PanelLayoutManager implements AppModule {
     categoryKey = panelKey,
   ): void {
     if (!this.shouldCreatePanel(panelKey)) return;
-    this.lazyImportedPanel(panelKey, () => import('@/components/NewsPanel'), 'NewsPanel', (NewsPanel) => {
+    // Record the category→panel-key mapping ONLY when the lazy registration
+    // actually took `panelKey`. A key already claimed by a non-news panel
+    // (CommoditiesPanel, SupplyChainPanel, LiveNewsPanel …) makes lazyPanel a
+    // no-op, and the category must then stay out of the registry so the data
+    // layer never resolves it as a news category — there is no NewsPanel to
+    // render into and every feed it fetches is waste (#5376).
+    const registered = this.lazyImportedPanel(panelKey, () => import('@/components/NewsPanel'), 'NewsPanel', (NewsPanel) => {
       const panel = new NewsPanel(panelKey, label, tooltip);
       this.attachRelatedAssetHandlers(panel);
       panel.setRiskScoreGetter(PanelLayoutManager.computeEventRisk);
       this.ctx.newsPanels[categoryKey] = panel;
+      // Backfill on PRESENCE, not length. A category that resolved to `[]` is a
+      // routine outcome — the digest simply carried no bucket for it — and this is
+      // the only chance a late-mounting panel gets to clear the skeleton its
+      // constructor installed. Skipping a cached `[]` used to be harmless because
+      // the second news load re-rendered every category; now that the load runs
+      // once per work-list that second chance is gone and the panel spins until the
+      // 20-minute refresh (#5376). `renderNews([])` is what shows the empty state.
       const existingItems = this.ctx.newsByCategory[categoryKey];
-      if (existingItems?.length) {
+      if (existingItems) {
         const filteredItems = this.filterItemsByTimeRange(existingItems);
-        if (filteredItems.length === 0) {
+        if (filteredItems.length === 0 && existingItems.length > 0) {
           panel.renderFilteredEmpty(`No items in ${this.getTimeRangeLabel()}`);
         } else {
           panel.renderNews(filteredItems);
@@ -1549,6 +1563,7 @@ export class PanelLayoutManager implements AppModule {
       }
       return panel;
     });
+    if (registered) this.ctx.newsCategoryPanelKeys.set(categoryKey, panelKey);
   }
 
   // 0-100 event risk score: 0.40×severity + 0.30×geoConvergence + 0.30×CII
@@ -3117,8 +3132,8 @@ export class PanelLayoutManager implements AppModule {
     createPanel: (PanelClass: PanelExport<M, K>, module: M) => ImportedPanel<M, K> | null,
     setup?: (panel: ImportedPanel<M, K>) => void,
     lockedFeatures?: string[],
-  ): void {
-    this.lazyPanel(
+  ): boolean {
+    return this.lazyPanel(
       key,
       () => this.importPanel(key, importer, exportName, createPanel),
       setup,
@@ -3132,18 +3147,27 @@ export class PanelLayoutManager implements AppModule {
     exportName: K,
     setup?: (panel: ImportedPanel<M, K>) => void,
     lockedFeatures?: string[],
-  ): void {
-    this.lazyImportedPanel(key, importer, exportName, (PanelClass) => new PanelClass() as ImportedPanel<M, K>, setup, lockedFeatures);
+  ): boolean {
+    return this.lazyImportedPanel(key, importer, exportName, (PanelClass) => new PanelClass() as ImportedPanel<M, K>, setup, lockedFeatures);
   }
 
+  /**
+   * Register a lazily-loaded panel under `key`.
+   *
+   * Returns whether THIS call claimed the key: `false` means the key is unknown
+   * to `panelSettings`, or some earlier registration (often a non-news data
+   * panel) already owns it and this registration is a no-op. Callers that index
+   * a panel by something other than its panel key rely on that signal — see
+   * `createNewsPanelWithLabel`.
+   */
   private lazyPanel<T extends Panel>(
     key: string,
     loader: () => Promise<T | null>,
     setup?: (panel: T) => void,
     lockedFeatures?: string[],
-  ): void {
-    if (!this.shouldCreatePanel(key)) return;
-    if (this.ctx.panels[key] || this.lazyPanelRegistrations.has(key)) return;
+  ): boolean {
+    if (!this.shouldCreatePanel(key)) return false;
+    if (this.ctx.panels[key] || this.lazyPanelRegistrations.has(key)) return false;
     this.lazyPanelRegistrations.set(key, {
       loading: null,
       load: async () => {
@@ -3171,6 +3195,7 @@ export class PanelLayoutManager implements AppModule {
         return basePanel;
       },
     });
+    return true;
   }
 
   private async loadRegisteredPanel(key: string): Promise<Panel | null> {
@@ -3594,13 +3619,4 @@ export class PanelLayoutManager implements AppModule {
     return localized === lookup ? fallback : localized;
   }
 
-  getAllSourceNames(): string[] {
-    const sources = new Set<string>();
-    // Preset feeds + sources from any custom news panels the user added, so
-    // the source manager stays in sync with what loadNews() actually fetches.
-    const categories = resolveNewsCategories(FEEDS, CANONICAL_FEEDS, enabledNewsCategoryKeys(this.ctx.newsPanels, this.ctx.panels, this.ctx.panelSettings, Object.keys(CANONICAL_FEEDS)));
-    categories.forEach(({ feeds }) => feeds.forEach(f => sources.add(f.name)));
-    INTEL_SOURCES.forEach(f => sources.add(f.name));
-    return Array.from(sources).sort((a, b) => a.localeCompare(b));
-  }
 }

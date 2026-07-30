@@ -193,6 +193,12 @@ export interface EventHandlerCallbacks {
   updateSearchIndex: () => void;
   updateFlightSource?: (adsb: PositionSample[], military: MilitaryFlight[]) => void;
   loadAllData: () => Promise<void>;
+  /**
+   * Tell the data loader that the rendered news no longer reflects the last
+   * load, so the next loadAllData() refetches it even though the category set
+   * is unchanged. See DataLoader.invalidateNewsHydration.
+   */
+  invalidateNewsHydration: () => void;
   flushStaleRefreshes: () => void;
   setHiddenSince: (ts: number) => void;
   loadDataForLayer: (layer: string) => void;
@@ -2024,6 +2030,11 @@ export class EventHandlerManager implements AppModule {
   }
 
   restoreSnapshot(snapshot: DashboardSnapshot): void {
+    // Replay parks every news panel on a loading state and never refills it —
+    // leaving playback calls loadAllData() to do that. Its news task is skipped
+    // when the category set is unchanged (#5376), which replay does not touch,
+    // so drop the record here and the exit reload happens.
+    this.callbacks.invalidateNewsHydration();
     for (const panel of Object.values(this.ctx.newsPanels)) {
       panel.showLoading();
     }
@@ -2353,7 +2364,7 @@ export class EventHandlerManager implements AppModule {
     const sources = new Set<string>();
     // Preset feeds + sources from any custom news panels the user added, so
     // the source manager stays in sync with what loadNews() actually fetches.
-    const categories = resolveNewsCategories(FEEDS, CANONICAL_FEEDS, enabledNewsCategoryKeys(this.ctx.newsPanels, this.ctx.panels, this.ctx.panelSettings, Object.keys(CANONICAL_FEEDS)));
+    const categories = resolveNewsCategories(FEEDS, CANONICAL_FEEDS, enabledNewsCategoryKeys(this.ctx.newsCategoryPanelKeys, this.ctx.panelSettings));
     categories.forEach(({ feeds }) => feeds.forEach(f => sources.add(f.name)));
     INTEL_SOURCES.forEach(f => sources.add(f.name));
     return Array.from(sources).sort((a, b) => a.localeCompare(b));
