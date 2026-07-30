@@ -428,9 +428,9 @@ continuous metric.
 | **Watch paths** | See `scripts/railway-services.json` (exact runtime closure; run `node scripts/audit-railway-watch-paths.mjs`) |
 | **Replaces** | 2 services |
 | **Net savings** | 1 slot |
-| **Members** | Correlation (5min), Cross-Source Signals (15min), Cross-Strait Activity (3h), Regional Snapshots (6h) |
+| **Members** | Correlation (5min), Cross-Source Signals (15min), Cross-Strait Activity (3h), China Decision Signals (15min), Regional Snapshots (6h) |
 | **Required env** | `JAPAN_MOD_PROXY_URL` or `PROXY_URL` (Cross-Strait Activity's Japan MOD exit; the section declares an any-of group, so either satisfies it and only an environment with neither fails as `CONFIG_ERROR`) |
-| **Note** | Cross-Strait Activity is the only external-source member; it uses bounded MND/Japan MOD requests and a 3h freshness gate. Other members are Redis-derived. The bundle enforces a 570s wall-time admission budget so a non-fitting due section defers before Railway's 10-minute container limit. |
+| **Note** | Cross-Strait Activity is the only direct external-source member; it uses bounded MND/Japan MOD requests and a 3h freshness gate. China Decision Signals validates and republishes the bounded public composition after reading its domain lanes. Other members are Redis-derived. The bundle enforces a 570s wall-time admission budget so a non-fitting due section defers before Railway's 10-minute container limit. |
 
 ### Bundle 6: seed-bundle-climate
 
@@ -467,7 +467,7 @@ continuous metric.
 | **Watch paths** | `scripts/**`, `shared/**` |
 | **Replaces** | 6 services |
 | **Net savings** | 5 slots |
-| **Members** | BIS Data (12h), BLS Series (daily), Eurostat (daily), IMF Macro (monthly), National Debt (monthly), FAO FFPI (daily, catches monthly release window) |
+| **Members** | BIS Data (12h), China Macro (36h), China Release Calendar (36h), China Policy Events (6h), BIS Extended (12h), BLS Series (daily), Eurostat (daily), Eurostat House Prices (7d), Eurostat Government Debt (2d), Eurostat Industrial Production (daily), IMF Macro (30d), National Debt (30d), FAO FFPI (daily), World Bank External Debt (30d), BIS LBS (7d), FATF Listing (30d) |
 
 ### Bundle 9: seed-bundle-health
 
@@ -492,8 +492,8 @@ continuous metric.
 | **Replaces** | 5 services |
 | **Net savings** | 4 slots |
 | **Members** | Crypto Quotes (5min), Hyperliquid Flow (5min), Stablecoin Markets (10min), ETF Flows (15min), China Corporate Disclosures (30min), Gulf Quotes (10min), Token Panels (30min), Gold ETF Flows (2h), Gold CB Reserves (daily), SEC CIK Map (daily), SEC 8-K Stream (30min) |
-| **Required env** | `PROXY_URL` (Gulf Quotes / ETF Flows require it and SZSE uses it when `SZSE_PROXY_URL` is unset) and `RELAY_SHARED_SECRET` (authenticates China Corporate Disclosures' fixed `https://api.worldmonitor.app/api/internal/china-exchange-egress` fallback after direct/proxy failures). This is the deployment contract; production provisioning and live fallback acceptance require separate verification. |
-| **Note** | These are BACKUP for ais-relay inline loops. ais-relay is the primary seeder. The bundle provides redundancy if relay goes down. Gulf Quotes uses Alpha Vantage (richer than relay's Yahoo-only). SEC CIK Map + SEC 8-K Stream (#5695) are primary (not backups): the ticker→CIK registry and the material-events stream for the corporate-intelligence endpoints. |
+| **Required env** | `PROXY_URL` (required independently by Gulf Quotes / ETF Flows and selected for an exchange only when its source-specific setting is absent) and `RELAY_SHARED_SECRET` (authenticates China Corporate Disclosures' fixed `https://api.worldmonitor.app/api/internal/china-exchange-egress` fallback after direct/proxy SZSE failures). Proxy configuration precedence is `SSE_PROXY_URL` → `SZSE_PROXY_URL` → `PROXY_URL` for SSE and `SZSE_PROXY_URL` → `PROXY_URL` for SZSE; the process selects the first non-empty setting rather than attempting each URL sequentially. This is the deployment contract; production provisioning and live fallback acceptance require separate verification. |
+| **Note** | Crypto Quotes, Stablecoin Markets, ETF Flows, Gulf Quotes, and Token Panels back up ais-relay inline loops. Hyperliquid Flow, China Corporate Disclosures, Gold ETF Flows, Gold CB Reserves, SEC CIK Map, and SEC 8-K Stream are primary in this bundle. China Corporate Disclosures reads official metadata only: SSE uses direct then the selected proxy, while SZSE uses direct, distinct port attempts within the selected proxy, then the authenticated fixed edge hop. Gulf Quotes uses Alpha Vantage (richer than relay's Yahoo-only). |
 
 ### Bundle 11: seed-bundle-relay-backup
 
@@ -665,6 +665,15 @@ fetch('https://backboard.railway.com/graphql/v2',{method:'POST',
 | seed-comtrade-bilateral-hs4 | `node scripts/seed-comtrade-bilateral-hs4.mjs` | **`0 6 1 * *` (monthly, verified 2026-07-27)** | UN Comtrade bilateral HS4 trade flows — only scheduled consumer of the keyed 500/mo Comtrade quota |
 | seed-hs2-chokepoint-exposure | `node scripts/seed-hs2-chokepoint-exposure.mjs` | periodic (TTL-extended) | HS2 chokepoint trade-exposure (derived) |
 | seed-service-statuses | `node scripts/seed-service-statuses.mjs` | frequent (relay-fallback) | Service-status warm-ping; primary seeder is the AIS relay loop |
+
+The bilateral HS4 cron uses `COMTRADE_API_KEYS` and a 480-request hard budget
+under the provider's 500-call monthly quota. The authenticated route requests
+one four-year window (`Y-2` through `Y-5`) in each of two HS4 batches and keeps
+the newest row per product/partner. The public-preview fallback cannot accept
+that period list and tries `Y-2`, then `Y-3`. A 24-day freshness gate prevents
+accidental repeat runs; health reports `COVERAGE_PARTIAL` below 110 country
+shards and stale after 35 days. Country payloads live for 40 days so a missed
+monthly tick becomes visible before last-good data expires.
 
 **Not standalone services (documented here to avoid confusion):**
 
