@@ -7,7 +7,7 @@ import { t } from '@/services/i18n';
 import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
 import { showToast } from '@/utils/toast';
 import { buildDataReportDocument, printReportDocument, sanitizeExportData } from '@/utils/export-report';
-import { SUPPORTED_EXPORT_FORMATS, type DataExportFormat } from '@/services/export-gate';
+import { SUPPORTED_EXPORT_FORMATS, type DataExportFormat } from '@/services/gates/export-resolver';
 
 // Iran-events domain sunset (war ended 2026-07). Default OFF: omit the IRAN
 // EVENTS CSV block. Set VITE_ENABLE_IRAN_ATTACKS=true to restore. Guarded so
