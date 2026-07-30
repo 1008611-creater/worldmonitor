@@ -6,6 +6,8 @@ const https = require('node:https');
 const zlib = require('node:zlib');
 
 const DECODO_GATE_HOST = 'gate.decodo.com';
+// Decodo's curl endpoint differs from its CONNECT endpoint.
+const DECODO_CURL_HOST = 'us.decodo.com';
 const DECODO_STICKY_PORT_MIN = 10_001;
 const DECODO_STICKY_PORT_MAX = 49_999;
 
@@ -106,7 +108,16 @@ function resolveProxyConfigWithFallback() {
 function resolveProxyString(raw = process.env.PROXY_URL || '') {
   const cfg = parseProxyConfig(raw);
   if (!cfg) return '';
-  const host = cfg.host.replace(/^gate\./, 'us.');
+  // Exact provider match, not a `gate.` prefix rewrite. Two reasons:
+  //   - parseProxyConfig's host:port:user:pass branch returns parts[0] verbatim,
+  //     so an operator's casing reaches this compare unchanged; a case-sensitive
+  //     match silently skipped the rewrite and left a curl caller pointed at the
+  //     CONNECT endpoint.
+  //   - a prefix match rewrites ANY `gate.*` host, so an unrelated proxy would be
+  //     redirected to a Decodo endpoint with its credentials attached. Matching
+  //     the one host we actually mean keeps every other provider untouched.
+  const normalizedHost = String(cfg.host || '').toLowerCase().replace(/\.$/u, '');
+  const host = normalizedHost === DECODO_GATE_HOST ? DECODO_CURL_HOST : cfg.host;
   return cfg.auth ? `${cfg.auth}@${host}:${cfg.port}` : `${host}:${cfg.port}`;
 }
 
