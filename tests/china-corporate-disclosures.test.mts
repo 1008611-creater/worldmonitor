@@ -1489,6 +1489,72 @@ describe('official China corporate disclosures (#5577)', () => {
     );
   });
 
+  it('drops intermediary routing identifiers that fail the allowlist', async () => {
+    const runWithEdgeHeaders = async (headers: Record<string, string>) => {
+      const decisions: Array<Record<string, unknown>> = [];
+      const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+        now: Date.parse(retrievedAt),
+        previousSnapshot: null,
+        proxyUrl: '',
+        edgeEgress: {
+          url: 'https://api.example.test/api/internal/china-exchange-egress',
+          secret: 'edge-relay-secret',
+        },
+        onDecision: (decision) => decisions.push(decision),
+        fetchFn: async (input) => {
+          const url = String(input);
+          if (url.includes('query.sse.com.cn')) {
+            return new Response(JSON.stringify({
+              pageHelp: { pageNo: 1, pageSize: 100, total: 0 },
+              result: [],
+            }), { status: 200 });
+          }
+          throw Object.assign(new TypeError('fetch failed'), {
+            cause: Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' }),
+          });
+        },
+        edgeRequestFn: async () => new Response(
+          '<html>intermediary-response-secret</html>',
+          {
+            status: 502,
+            headers: { 'Content-Type': 'text/html; charset=utf-8', ...headers },
+          },
+        ),
+      });
+      return {
+        decision: decisions.find((decision) => decision.sourceId === 'szse'),
+        serialized: JSON.stringify({ snapshot, decisions }),
+      };
+    };
+
+    const rejectedCfRay = 'not-a-valid-ray';
+    // Allowlisted charset, but 102 characters -- rejected on length alone.
+    const rejectedVercelId = `iad1::${'x'.repeat(96)}`;
+
+    // A rejected identifier is dropped on its own; an allowlisted sibling in the
+    // same response still survives, so the guards must reject per field rather
+    // than pass the whole header set through or withhold all of it.
+    const partial = await runWithEdgeHeaders({
+      Server: 'vercel',
+      'CF-Ray': rejectedCfRay,
+      'X-Vercel-Id': rejectedVercelId,
+    });
+    assert.deepEqual(partial.decision?.edgeFailureDiagnostic, {
+      contentType: 'text/html',
+      server: 'vercel',
+    });
+    assert.doesNotMatch(partial.serialized, /not-a-valid-ray|xxxxxxxx/);
+
+    // Nothing allowlisted: the diagnostic is withheld entirely.
+    const none = await runWithEdgeHeaders({
+      Server: 'nginx',
+      'CF-Ray': rejectedCfRay,
+      'X-Vercel-Id': rejectedVercelId,
+    });
+    assert.equal('edgeFailureDiagnostic' in (none.decision ?? {}), false);
+    assert.doesNotMatch(none.serialized, /nginx|not-a-valid-ray|xxxxxxxx/);
+  });
+
   it('retains last-good SZSE data and all transport reasons after edge failure', async () => {
     const healthy = await fetchChinaCorporateDisclosureSnapshot({
       now: Date.parse(retrievedAt),

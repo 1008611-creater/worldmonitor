@@ -47,6 +47,25 @@ describe('proxy utilities', () => {
         rotatingPort,
       );
     }
+    // The host:port:user:pass form preserves hostname casing (the URL form does
+    // not), so provider detection must normalize rather than compare verbatim.
+    for (const equivalentHost of ['GATE.DECODO.COM', 'Gate.Decodo.Com', 'gate.decodo.com.']) {
+      assert.equal(
+        parseProxyConfigForAttempt(
+          `${equivalentHost}:10001:proxy-user:proxy-secret`,
+          1,
+        ).port,
+        10002,
+        equivalentHost,
+      );
+      assert.equal(
+        parseProxyConfigForAttempt(
+          `${equivalentHost}:10001:proxy-user:proxy-secret`,
+          1,
+        ).host,
+        equivalentHost,
+      );
+    }
     assert.equal(
       parseProxyConfigForAttempt(
         'https://proxy-user:proxy-secret@proxy.test:443',

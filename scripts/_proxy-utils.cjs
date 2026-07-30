@@ -61,8 +61,12 @@ function parseProxyConfigForAttempt(raw, attempt = 0) {
   const config = parseProxyConfig(raw);
   if (!config) return null;
   const port = Number(config.port);
+  // Normalize for provider detection only: the host:port:user:pass form keeps
+  // whatever casing the operator typed, while the URL form is lowercased by the
+  // URL parser. config.host stays verbatim so the connection is unchanged.
+  const host = String(config.host || '').toLowerCase().replace(/\.$/u, '');
   if (
-    config.host !== DECODO_GATE_HOST
+    host !== DECODO_GATE_HOST
     || !Number.isInteger(port)
     || port < DECODO_STICKY_PORT_MIN
     || port > DECODO_STICKY_PORT_MAX
