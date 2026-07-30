@@ -4,11 +4,13 @@ import { deriveBillingUxState, getBillingGateOverride, getReactivationHref } fro
 import { getEntitlementState } from './entitlements';
 import {
   isExportGateActive,
+  resolveAvailableExportFormats,
   resolveExportGate,
   resolveTabCap,
   type ExportGateInputs,
   type ExportGateLockReason,
   type ExportGateVerdict,
+  type DataExportFormat,
   type TabCapVerdict,
 } from './export-gate';
 import {
@@ -147,6 +149,7 @@ export function readExportGateInputs(authState: AuthSession): ExportGateInputs {
       ? {
           tier: entitlement.features.tier,
           dataExport: entitlement.features.dataExport,
+          exportFormats: entitlement.features.exportFormats,
           maxDashboards: entitlement.features.maxDashboards,
         }
       : null,
@@ -157,6 +160,11 @@ export function readExportGateInputs(authState: AuthSession): ExportGateInputs {
 /** Current data-export verdict for the given auth session. */
 export function evaluateExportGate(authState: AuthSession): ExportGateVerdict {
   return resolveExportGate(readExportGateInputs(authState));
+}
+
+/** Formats the unlocked export menu may expose for this live session. */
+export function evaluateAvailableExportFormats(authState: AuthSession): DataExportFormat[] {
+  return resolveAvailableExportFormats(readExportGateInputs(authState));
 }
 
 /**
