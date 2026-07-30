@@ -43,6 +43,18 @@ const SECOND_LOAD_SETTLE_MS = 8_000;
 
 // src/app/data-loader.ts `perFeedFallbackCategoryFeedLimit`. Every per-feed
 // fallback is capped at this many feeds per category, custom categories included.
+//
+// The cap bounds a SINGLE LOAD, and since #5873 that is the whole of what it
+// bounds: a custom category now rotates its window by the cap on each refresh
+// cycle (fixed prefixes made feeds 4..N unreachable forever), so N loads reach
+// up to N × cap distinct feeds over time. This spec seeds a fresh anonymous
+// profile, so the persisted rotation cycle starts at 0 and the window is the
+// leading prefix — exactly the pre-rotation feed set.
+//
+// That makes the assertion below transitively a single-load guard too: a second
+// news load in one page load would advance the rotation and fetch 6 distinct
+// feeds instead of 3. It fails alongside the explicit `digestUrls.length === 1`
+// assertion rather than instead of it.
 const PER_FEED_FALLBACK_CATEGORY_FEED_LIMIT = 3;
 
 // A Tech news panel customized into a `full` session: absent from FULL_FEEDS, so
@@ -394,6 +406,22 @@ test.describe('dashboard news request budget (#5376)', () => {
       `"${CUSTOM_CATEGORY_KEY}" must declare more than ${PER_FEED_FALLBACK_CATEGORY_FEED_LIMIT} sources ` +
         `for the cap assertion to mean anything (expected ~${CUSTOM_CATEGORY_FEED_COUNT})`,
     ).toBeGreaterThan(PER_FEED_FALLBACK_CATEGORY_FEED_LIMIT);
+
+    // The window is ROTATING, not a fixed prefix (#5873) — and on a freshly
+    // seeded profile it must start at cycle 0, which is what makes the exact
+    // feed-set assertion above deterministic. A missing cycle in the warning
+    // means the rotation was never wired; a non-zero one means the persisted
+    // cycle leaked in from another test's profile and this spec is no longer
+    // measuring a first load.
+    const cycle = capWarnings.join(' ').match(/rotation cycle (\d+)/);
+    expect(
+      cycle,
+      `expected the "[News] Custom category" warning to name its rotation cycle, got: ${capWarnings.join(' | ')}`,
+    ).not.toBeNull();
+    expect(
+      Number(cycle?.[1]),
+      'a freshly seeded anonymous profile has no persisted rotation state, so the first load is cycle 0',
+    ).toBe(0);
 
     expect(
       log.digestUrls.length,
