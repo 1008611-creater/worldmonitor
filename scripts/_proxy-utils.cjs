@@ -185,6 +185,11 @@ function proxyConnectTunnel(targetHostname, proxyConfig, { timeoutMs = 20_000, t
           return rejectOnce(
             Object.assign(new Error(`Proxy CONNECT: ${statusLine}`), {
               status: parseInt(statusLine.split(' ')[1], 10) || 0,
+              // Marks a gateway-layer rejection (auth, quota, policy) as opposed
+              // to a status the target origin returned through the tunnel. The
+              // two are indistinguishable once both collapse to HTTP_<status>,
+              // and only the origin case can be helped by a different exit.
+              proxyConnect: true,
             })
           );
         }
