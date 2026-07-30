@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
-import { GDELT_COUNTRY_NAMES, gdeltSeenDateToIso } from './_conflict-gdelt.mjs';
+import { GDELT_COUNTRY_NAMES, gdeltSeenDateToIso, gdeltSeenDateToMs } from './_conflict-gdelt.mjs';
 import { allSettledWithConcurrency } from './_seed-utils.mjs';
 
 const GDELT_STORAGE_ORIGIN = 'https://storage.googleapis.com/data.gdeltproject.org';
@@ -135,13 +135,10 @@ function sourceDomain(sourceUrl) {
   }
 }
 
+// Kept as a re-export for this module's existing consumers; the parser's
+// single home is _conflict-gdelt.mjs (#5856 review).
 export function gdeltTimestampToMs(value) {
-  const digits = String(value || '').replace(/[^0-9]/g, '');
-  if (digits.length < 14) return Number.NaN;
-  return Date.parse(
-    `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
-      + `T${digits.slice(8, 10)}:${digits.slice(10, 12)}:${digits.slice(12, 14)}Z`,
-  );
+  return gdeltSeenDateToMs(value);
 }
 
 export function mapGdeltExportToConflictEvents(csv) {

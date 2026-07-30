@@ -59,9 +59,20 @@ export function __resetKeyPrefixCacheForTests(): void {
   cachedPrefix = undefined;
 }
 
-type CacheReadResult = { status: 'hit'; value: unknown } | { status: 'miss' } | { status: 'error'; error: unknown };
+export type CacheReadResult = { status: 'hit'; value: unknown } | { status: 'miss' } | { status: 'error'; error: unknown };
 
-async function readCachedJson(key: string, raw = false): Promise<CacheReadResult> {
+/**
+ * Cache read that keeps "miss" and "error" distinguishable. `getCachedJson`
+ * collapses both to `null`, which is right for callers that degrade the same
+ * way either way. Export it for the callers that must NOT: a read failure that
+ * looks like an empty key is exactly how a dead upstream stays invisible in
+ * every dashboard (issue #5850).
+ *
+ * `raw = true` skips the deployment key prefix (`getKeyPrefix()`); use it for
+ * seed-owned keys written unprefixed by the Railway seeders, mirroring
+ * `getCachedJson`'s own raw flag. Leave false for keys this app writes.
+ */
+export async function readCachedJson(key: string, raw = false): Promise<CacheReadResult> {
   if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
     try {
       const { sidecarCacheGet } = await import('./sidecar-cache');

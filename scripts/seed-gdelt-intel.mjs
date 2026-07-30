@@ -63,6 +63,10 @@ const INTEL_TOPICS = [
   { id: 'intelligence', query: '(espionage OR spy OR "intelligence agency" OR covert OR surveillance) sourcelang:eng' },
   { id: 'maritime',     query: '(naval blockade OR piracy OR "strait of hormuz" OR "south china sea" OR warship) sourcelang:eng' },
 ];
+// Exported so consumers of the canonical payload (chat-analyst domain scoping)
+// can pin their hardcoded topic vocabulary against the seeder's in a test —
+// a topic rename here silently drops articles from any stale copy (#5856 review).
+export const INTEL_TOPIC_IDS = INTEL_TOPICS.map((topic) => topic.id);
 
 const TIMELINE_SERIES = [
   { id: 'tone', mode: 'TimelineTone', topicField: '_tone' },
