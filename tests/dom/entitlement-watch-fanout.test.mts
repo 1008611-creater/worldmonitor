@@ -23,6 +23,8 @@ type UpdateCallback = (result: Snapshot) => void;
 /** The callback `initEntitlementSubscription` registers with `client.onUpdate`. */
 let captured: UpdateCallback | null = null;
 let unsubscribed = 0;
+let watchCurrent = true;
+let watchUserId = 'user_1';
 
 vi.mock('@/services/convex-client', () => ({
   getConvexClient: async () => ({
@@ -33,6 +35,10 @@ vi.mock('@/services/convex-client', () => ({
   }),
   getConvexApi: async () => ({ entitlements: { getEntitlementsForUser: 'q' } }),
   waitForConvexAuth: async () => true,
+  waitForConvexAuthForUser: async () => true,
+}));
+vi.mock('@/services/clerk', () => ({
+  getCurrentClerkUser: () => ({ id: watchUserId }),
 }));
 
 const {
@@ -50,10 +56,12 @@ let cleanup: Array<() => void> = [];
 beforeEach(async () => {
   captured = null;
   unsubscribed = 0;
+  watchCurrent = true;
+  watchUserId = 'user_1';
   cleanup = [];
   // `initialized` latches after the first success, so tear down between cases.
   destroyEntitlementSubscription();
-  await initEntitlementSubscription('user_1');
+  await initEntitlementSubscription('user_1', () => watchCurrent);
   expect(captured).not.toBeNull();
 });
 
@@ -93,5 +101,16 @@ describe('Convex watch fan-out (#5632)', () => {
     captured!(PRO);
 
     expect(getEntitlementState()).toEqual(PRO);
+  });
+
+  it('drops a late snapshot after the account handoff becomes stale', () => {
+    const seen: Snapshot[] = [];
+    subscribe((state) => seen.push(state));
+    watchUserId = 'user_2';
+
+    captured!(PRO);
+
+    expect(getEntitlementState()).toBeNull();
+    expect(seen).toEqual([]);
   });
 });

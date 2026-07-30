@@ -7,7 +7,13 @@
  * is not configured or ConvexClient is unavailable.
  */
 
-import { getConvexClient, getConvexApi, waitForConvexAuth } from './convex-client';
+import {
+  getConvexClient,
+  getConvexApi,
+  waitForConvexAuth,
+  waitForConvexAuthForUser,
+} from './convex-client';
+import { getCurrentClerkUser } from './clerk';
 
 export interface EntitlementState {
   planKey: string;
@@ -76,8 +82,14 @@ function notifyListeners(state: EntitlementState | null): void {
  * Idempotent — calling multiple times is a no-op after the first.
  * Failures are logged but never thrown (dashboard must not break).
  */
-export async function initEntitlementSubscription(_userId?: string): Promise<void> {
-  if (initialized) return;
+export async function initEntitlementSubscription(
+  _userId?: string,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  const isExpectedAccount = (): boolean => (
+    isCurrent() && (_userId === undefined || getCurrentClerkUser()?.id === _userId)
+  );
+  if (initialized || !isExpectedAccount()) return;
 
   try {
     const client = await getConvexClient();
@@ -98,20 +110,25 @@ export async function initEntitlementSubscription(_userId?: string): Promise<voi
     // decision (the UI renders as free before the auth-ready pro snapshot
     // arrives). Unauthenticated visitors time out after 10s and we skip the
     // subscription entirely — they don't need entitlement updates.
-    const authed = await waitForConvexAuth(10_000);
+    const authed = _userId
+      ? await waitForConvexAuthForUser(_userId, 10_000)
+      : await waitForConvexAuth(10_000);
     if (!authed) {
       console.log('[entitlements] Convex auth not established — skipping subscription');
       return;
     }
+    if (!isExpectedAccount()) return;
 
     const watch = client.onUpdate(
       api.entitlements.getEntitlementsForUser,
       {},
       (result: EntitlementState | null) => {
+        if (!isExpectedAccount()) return;
         currentState = result;
         notifyListeners(result);
       },
       (err: Error) => {
+        if (!isExpectedAccount()) return;
         console.warn('[entitlements] Subscription query error:', err.message);
       },
     );
