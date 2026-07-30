@@ -26,7 +26,7 @@ export type Candle = {
 
 type TrendStatus = 'Strong bull' | 'Bull' | 'Weak bull' | 'Consolidation' | 'Weak bear' | 'Bear' | 'Strong bear';
 type VolumeStatus = 'Heavy volume up' | 'Heavy volume down' | 'Shrink volume up' | 'Shrink volume down' | 'Normal';
-type Signal = 'Strong buy' | 'Buy' | 'Hold' | 'Watch' | 'Sell' | 'Strong sell';
+export type Signal = 'Strong buy' | 'Buy' | 'Hold' | 'Watch' | 'Sell' | 'Strong sell';
 type MacdStatus = 'Golden cross above zero' | 'Golden cross' | 'Bullish' | 'Crossing up' | 'Crossing down' | 'Bearish' | 'Death cross';
 type RsiStatus = 'Overbought' | 'Strong buy' | 'Neutral' | 'Weak' | 'Oversold';
 
@@ -451,7 +451,7 @@ const BIAS_THRESHOLD = 5;
 const VOLUME_SHRINK_RATIO = 0.7;
 const VOLUME_HEAVY_RATIO = 1.5;
 const MA_SUPPORT_TOLERANCE = 0.02;
-export const STOCK_ANALYSIS_ENGINE_VERSION = 'v2';
+export const STOCK_ANALYSIS_ENGINE_VERSION = 'v3-composite';
 
 function round(value: number, digits = 2): number {
   return Number.isFinite(value) ? Number(value.toFixed(digits)) : 0;
@@ -1243,12 +1243,7 @@ export function buildTechnicalSnapshot(candles: Candle[]): TechnicalSnapshot {
 
   signalScore = clamp(Math.round(signalScore), 0, 100);
 
-  let signal: Signal = 'Sell';
-  if (signalScore >= 75 && (trendStatus === 'Strong bull' || trendStatus === 'Bull')) signal = 'Strong buy';
-  else if (signalScore >= 60 && (trendStatus === 'Strong bull' || trendStatus === 'Bull' || trendStatus === 'Weak bull')) signal = 'Buy';
-  else if (signalScore >= 45) signal = 'Hold';
-  else if (signalScore >= 30) signal = 'Watch';
-  else if (trendStatus === 'Bear' || trendStatus === 'Strong bear') signal = 'Strong sell';
+  const signal = deriveSignal(signalScore, trendStatus);
 
   const realizedVolatility = computeRealizedVolatility(closes);
   const atr = computeAtr(highs, lows, closes);
@@ -1340,7 +1335,118 @@ async function fetchUpcomingEarnings(): Promise<EarningsEntry[]> {
   }
 }
 
-export function getFallbackOverlay(name: string, technical: TechnicalSnapshot, headlines: StockAnalysisHeadline[]): AiOverlay {
+/**
+ * Map a 0-100 score plus trend to the Strong buy…Strong sell rating. Extracted
+ * verbatim from the former inline logic in {@link buildTechnicalSnapshot} so the
+ * same thresholds drive both the technicals-only signal and the
+ * fundamentals-blended composite rating.
+ */
+export function deriveSignal(score: number, trendStatus: TrendStatus): Signal {
+  if (score >= 75 && (trendStatus === 'Strong bull' || trendStatus === 'Bull')) return 'Strong buy';
+  if (score >= 60 && (trendStatus === 'Strong bull' || trendStatus === 'Bull' || trendStatus === 'Weak bull')) return 'Buy';
+  if (score >= 45) return 'Hold';
+  if (score >= 30) return 'Watch';
+  if (trendStatus === 'Bear' || trendStatus === 'Strong bear') return 'Strong sell';
+  return 'Sell';
+}
+
+// Ascending [threshold, score] bands. Returns the score of the highest
+// threshold `value` clears; bands[0] is the floor (its threshold is -Infinity).
+type ScoreBand = readonly [threshold: number, score: number];
+function bandScore(value: number, bands: readonly ScoreBand[]): number {
+  let score = 50; // neutral default; overwritten by the -Infinity floor band on the first pass
+  for (const [threshold, bandValue] of bands) {
+    if (value >= threshold) score = bandValue;
+    else break;
+  }
+  return score;
+}
+
+// Technicals lead the composite; fundamentals temper the rating rather than
+// override it. Named so the weighting is easy to find and tune.
+const FUNDAMENTAL_TECHNICAL_WEIGHT = 0.65;
+
+/**
+ * Fundamental health score (0-100) from the quality / growth / leverage fields
+ * Yahoo returns in the financialData module (already fetched for price targets).
+ * Each present sub-metric maps to a 0-100 band; each dimension averages its
+ * present metrics, and the dimensions combine with a quality-heavy weighting
+ * (renormalised over whichever dimensions are present). Returns null when the
+ * data is too sparse to be meaningful (fewer than 3 metrics or fewer than 2
+ * dimensions) so data-poor names fall back to a technicals-only rating instead
+ * of being penalised for missing data.
+ */
+export function computeFundamentalScore(f: StockFundamentals): number | null {
+  const finite = (v: number | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+  // Quality — margins, returns on capital, cash generation. Higher is better.
+  const quality: number[] = [];
+  const profitMargin = finite(f.profitMargin);
+  if (profitMargin !== null) quality.push(bandScore(profitMargin, [[-Infinity, 15], [0, 42], [0.05, 58], [0.12, 75], [0.20, 90]]));
+  const operatingMargin = finite(f.operatingMargin);
+  if (operatingMargin !== null) quality.push(bandScore(operatingMargin, [[-Infinity, 18], [0, 45], [0.08, 62], [0.18, 80], [0.30, 92]]));
+  const grossMargin = finite(f.grossMargin);
+  if (grossMargin !== null) quality.push(bandScore(grossMargin, [[-Infinity, 30], [0.20, 50], [0.35, 64], [0.50, 78], [0.65, 90]]));
+  const returnOnEquity = finite(f.returnOnEquity);
+  if (returnOnEquity !== null) quality.push(bandScore(returnOnEquity, [[-Infinity, 20], [0, 45], [0.10, 65], [0.18, 80], [0.30, 90]]));
+  const returnOnAssets = finite(f.returnOnAssets);
+  if (returnOnAssets !== null) quality.push(bandScore(returnOnAssets, [[-Infinity, 20], [0, 45], [0.05, 63], [0.10, 80], [0.18, 90]]));
+  const freeCashflow = finite(f.freeCashflow);
+  if (freeCashflow !== null) quality.push(freeCashflow > 0 ? 72 : 32); // FCF sign only — magnitude isn't comparable across market caps.
+
+  // Growth — top and bottom line. Higher is better.
+  const growth: number[] = [];
+  const revenueGrowth = finite(f.revenueGrowth);
+  if (revenueGrowth !== null) growth.push(bandScore(revenueGrowth, [[-Infinity, 12], [-0.05, 35], [0.03, 55], [0.12, 75], [0.25, 90]]));
+  const earningsGrowth = finite(f.earningsGrowth);
+  if (earningsGrowth !== null) growth.push(bandScore(earningsGrowth, [[-Infinity, 12], [-0.10, 35], [0.05, 58], [0.20, 78], [0.40, 90]]));
+
+  // Leverage — lower debt is healthier, so the score falls as debt rises.
+  const leverage: number[] = [];
+  const debtToEquity = finite(f.debtToEquity);
+  if (debtToEquity !== null) {
+    // fetchYahooAnalystData already converts Yahoo's percentage points to a
+    // normalized ratio (150 -> 1.5x). Score that ratio exactly once.
+    leverage.push(debtToEquity < 0 ? 25 : debtToEquity <= 0.3 ? 90 : debtToEquity <= 0.6 ? 78 : debtToEquity <= 1.0 ? 62 : debtToEquity <= 2.0 ? 42 : 22);
+  }
+  const totalCash = finite(f.totalCash);
+  const totalDebt = finite(f.totalDebt);
+  if (totalCash !== null && totalDebt !== null) {
+    leverage.push(totalCash >= totalDebt ? 85 : totalCash >= totalDebt * 0.5 ? 62 : 40);
+  }
+
+  const metricCount = quality.length + growth.length + leverage.length;
+  if (metricCount < 3) return null;
+
+  const dimensions: Array<{ score: number; weight: number }> = [];
+  if (quality.length) dimensions.push({ score: mean(quality), weight: 0.5 });
+  if (growth.length) dimensions.push({ score: mean(growth), weight: 0.3 });
+  if (leverage.length) dimensions.push({ score: mean(leverage), weight: 0.2 });
+  if (dimensions.length < 2) return null;
+
+  const weightTotal = dimensions.reduce((sum, d) => sum + d.weight, 0);
+  const blended = dimensions.reduce((sum, d) => sum + d.score * d.weight, 0) / weightTotal;
+  return clamp(Math.round(blended), 0, 100);
+}
+
+/**
+ * Blend the technicals-only {@link signalScore} with {@link computeFundamentalScore}.
+ * Returns signalScore unchanged when the fundamental score is null (sparse data),
+ * so the rating is never altered for names we cannot fundamentally score.
+ */
+export function computeCompositeScore(signalScore: number, fundamentalScore: number | null): number {
+  if (fundamentalScore === null) return signalScore;
+  return clamp(Math.round(FUNDAMENTAL_TECHNICAL_WEIGHT * signalScore + (1 - FUNDAMENTAL_TECHNICAL_WEIGHT) * fundamentalScore), 0, 100);
+}
+
+export function getFallbackOverlay(
+  name: string,
+  technical: TechnicalSnapshot,
+  headlines: StockAnalysisHeadline[],
+  ratingScore = technical.signalScore,
+  ratingSignal: Signal = technical.signal,
+): AiOverlay {
+  const resolvedRatingScore = Number.isFinite(ratingScore) ? ratingScore : technical.signalScore;
   const technicalSummary = `${technical.maAlignment} ${technical.volumeTrend} ${technical.macdSignal} ${technical.rsiSignal}`;
   const newsSummary = headlines.length > 0
     ? `Recent coverage is led by ${headlines[0]?.source || 'market press'}: ${headlines[0]?.title || 'no headline available'}`
@@ -1353,10 +1459,10 @@ export function getFallbackOverlay(name: string, technical: TechnicalSnapshot, h
     'Sell': 'Reduce exposure into strength.',
     'Strong sell': 'Exit or avoid new long exposure.',
   };
-  const confidence = technical.signalScore >= 75 ? 'High' : technical.signalScore >= 55 ? 'Medium' : 'Low';
+  const confidence = resolvedRatingScore >= 75 ? 'High' : resolvedRatingScore >= 55 ? 'Medium' : 'Low';
   return {
-    summary: `${name} screens as ${technical.signal.toLowerCase()} with a ${technical.trendStatus.toLowerCase()} setup and a ${technical.signalScore}/100 score.`,
-    action: actionMap[technical.signal],
+    summary: `${name} screens as ${ratingSignal.toLowerCase()} with a ${technical.trendStatus.toLowerCase()} setup and a ${resolvedRatingScore}/100 score.`,
+    action: actionMap[ratingSignal],
     confidence,
     whyNow: `Price sits ${technical.biasMa5}% versus MA5, MACD is ${technical.macdStatus.toLowerCase()}, and RSI(12) is ${technical.rsi12}.`,
     technicalSummary,
@@ -1369,26 +1475,66 @@ export function getFallbackOverlay(name: string, technical: TechnicalSnapshot, h
   };
 }
 
+function getRatingFallbackOverlay(
+  name: string,
+  technical: TechnicalSnapshot,
+  headlines: StockAnalysisHeadline[],
+  fundamentalScore: number | null,
+  compositeScore: number,
+  ratingSignal: Signal,
+): AiOverlay {
+  const overlay = getFallbackOverlay(name, technical, headlines, compositeScore, ratingSignal);
+  if (fundamentalScore == null) return overlay;
+
+  const fundamentalFactor = `Fundamental quality scores ${fundamentalScore}/100.`;
+  return {
+    ...overlay,
+    whyNow: `${overlay.whyNow} The composite rating blends a ${technical.signalScore}/100 technical score with a ${fundamentalScore}/100 fundamental score.`,
+    bullishFactors: fundamentalScore >= 55
+      ? [fundamentalFactor, ...overlay.bullishFactors].slice(0, 4)
+      : overlay.bullishFactors,
+    riskFactors: fundamentalScore < 55
+      ? [fundamentalFactor, ...overlay.riskFactors].slice(0, 4)
+      : overlay.riskFactors,
+  };
+}
+
 async function buildAiOverlay(
   symbol: string,
   name: string,
   technical: TechnicalSnapshot,
   headlines: StockAnalysisHeadline[],
   fundamentals: StockFundamentals,
-): Promise<AiOverlay> {
-  const fallback = getFallbackOverlay(name, technical, headlines);
+  fundamentalScore: number | null,
+  compositeScore: number,
+  ratingSignal: Signal,
+): Promise<{ legacy: AiOverlay; rating: AiOverlay }> {
+  const legacyFallback = getFallbackOverlay(name, technical, headlines);
+  const ratingFallback = getRatingFallbackOverlay(
+    name,
+    technical,
+    headlines,
+    fundamentalScore,
+    compositeScore,
+    ratingSignal,
+  );
   const hasFundamentals = Object.values(fundamentals).some((v) => typeof v === 'number');
   const llm = await callLlm({
     messages: [
       {
         role: 'system',
-        content: 'You are a disciplined stock analyst. Weigh the fundamentals alongside the technicals and news — do not judge on price action alone. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. Return strict JSON only with keys: summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, riskFactors, newsSentiment. newsSentiment is a signed number from -1 to 1 scoring how bullish the supplied news headlines are for the stock (-1 very bearish, 0 neutral or no material news, 1 very bullish); base it only on the supplied headlines. Keep it concise, factual, and free of disclaimers.',
+        content: 'You are a disciplined stock analyst. Return strict JSON only with top-level keys technical, rating, and newsSentiment. technical and rating must each contain summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, and riskFactors. The technical narrative must remain paired with technical.signal and technical.signalScore; do not change its stated rating, action, or confidence based on fundamentals. The rating narrative must remain paired with rating.signal and rating.compositeScore and weigh fundamentals alongside technicals and news. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. newsSentiment is a signed number from -1 to 1 scoring how bullish the supplied news headlines are for the stock (-1 very bearish, 0 neutral or no material news, 1 very bullish); base it only on the supplied headlines. Keep both narratives concise, factual, and free of disclaimers.',
       },
       {
         role: 'user',
         content: JSON.stringify({
           symbol,
           name,
+          rating: {
+            signal: ratingSignal,
+            compositeScore,
+            fundamentalScore: fundamentalScore ?? undefined,
+          },
           technical: {
             signal: technical.signal,
             signalScore: technical.signalScore,
@@ -1423,15 +1569,23 @@ async function buildAiOverlay(
       },
     ],
     temperature: 0.2,
-    maxTokens: 500,
+    maxTokens: 800,
     timeoutMs: 20_000,
     stage: 'analyze-stock',
     providerOrder: ['openrouter', 'generic'],
     validate: (content) => {
       try {
         const parsed = JSON.parse(content) as Record<string, unknown>;
-        return typeof parsed.summary === 'string'
-          && typeof parsed.action === 'string'
+        const technicalNarrative = parsed.technical;
+        const ratingNarrative = parsed.rating;
+        return typeof technicalNarrative === 'object'
+          && technicalNarrative !== null
+          && typeof (technicalNarrative as Record<string, unknown>).summary === 'string'
+          && typeof (technicalNarrative as Record<string, unknown>).action === 'string'
+          && typeof ratingNarrative === 'object'
+          && ratingNarrative !== null
+          && typeof (ratingNarrative as Record<string, unknown>).summary === 'string'
+          && typeof (ratingNarrative as Record<string, unknown>).action === 'string'
           && (headlines.length === 0
             || (typeof parsed.newsSentiment === 'number' && Number.isFinite(parsed.newsSentiment)));
       } catch {
@@ -1440,37 +1594,42 @@ async function buildAiOverlay(
     },
   });
 
-  if (!llm) return fallback;
+  if (!llm) return { legacy: legacyFallback, rating: ratingFallback };
 
   try {
     const parsed = JSON.parse(llm.content) as {
-      summary?: string;
-      action?: string;
-      confidence?: string;
-      whyNow?: string;
-      technicalSummary?: string;
-      newsSummary?: string;
-      bullishFactors?: string[];
-      riskFactors?: string[];
+      technical?: Record<string, unknown>;
+      rating?: Record<string, unknown>;
       newsSentiment?: number;
     };
 
-    return {
-      summary: parsed.summary?.trim() || fallback.summary,
-      action: parsed.action?.trim() || fallback.action,
-      confidence: parsed.confidence?.trim() || fallback.confidence,
-      whyNow: parsed.whyNow?.trim() || fallback.whyNow,
-      technicalSummary: parsed.technicalSummary?.trim() || fallback.technicalSummary,
-      newsSummary: parsed.newsSummary?.trim() || fallback.newsSummary,
+    const mergeWithFallback = (
+      narrative: Record<string, unknown> | undefined,
+      fallback: AiOverlay,
+    ): AiOverlay => ({
+      summary: typeof narrative?.summary === 'string' && narrative.summary.trim() ? narrative.summary.trim() : fallback.summary,
+      action: typeof narrative?.action === 'string' && narrative.action.trim() ? narrative.action.trim() : fallback.action,
+      confidence: typeof narrative?.confidence === 'string' && narrative.confidence.trim() ? narrative.confidence.trim() : fallback.confidence,
+      whyNow: typeof narrative?.whyNow === 'string' && narrative.whyNow.trim() ? narrative.whyNow.trim() : fallback.whyNow,
+      technicalSummary: typeof narrative?.technicalSummary === 'string' && narrative.technicalSummary.trim() ? narrative.technicalSummary.trim() : fallback.technicalSummary,
+      newsSummary: typeof narrative?.newsSummary === 'string' && narrative.newsSummary.trim() ? narrative.newsSummary.trim() : fallback.newsSummary,
       newsSentiment: normalizeNewsSentiment(parsed.newsSentiment) ?? fallback.newsSentiment,
-      bullishFactors: Array.isArray(parsed.bullishFactors) && parsed.bullishFactors.length > 0 ? parsed.bullishFactors.slice(0, 4) : fallback.bullishFactors,
-      riskFactors: Array.isArray(parsed.riskFactors) && parsed.riskFactors.length > 0 ? parsed.riskFactors.slice(0, 4) : fallback.riskFactors,
+      bullishFactors: Array.isArray(narrative?.bullishFactors)
+        ? narrative.bullishFactors.filter((factor): factor is string => typeof factor === 'string').slice(0, 4)
+        : fallback.bullishFactors,
+      riskFactors: Array.isArray(narrative?.riskFactors)
+        ? narrative.riskFactors.filter((factor): factor is string => typeof factor === 'string').slice(0, 4)
+        : fallback.riskFactors,
       provider: llm.provider,
       model: llm.model,
       fallback: false,
+    });
+    return {
+      legacy: mergeWithFallback(parsed.technical, legacyFallback),
+      rating: mergeWithFallback(parsed.rating, ratingFallback),
     };
   } catch {
-    return fallback;
+    return { legacy: legacyFallback, rating: ratingFallback };
   }
 }
 
@@ -1481,15 +1640,20 @@ export function buildAnalysisResponse(params: {
   technical: TechnicalSnapshot;
   headlines: StockAnalysisHeadline[];
   overlay: AiOverlay;
+  ratingOverlay?: AiOverlay;
   analystData: AnalystData;
   includeNews: boolean;
   analysisAt: number;
   generatedAt: string;
   analysisId?: string;
+  engineVersion?: string;
   dividend?: DividendProfile;
   marketSession?: string;
   extended?: ExtendedHoursQuote;
   earnings?: UpcomingEarnings | null;
+  fundamentalScore?: number | null;
+  compositeScore?: number;
+  ratingSignal?: Signal;
 }): AnalyzeStockResponse {
   const {
     symbol,
@@ -1498,6 +1662,7 @@ export function buildAnalysisResponse(params: {
     technical,
     headlines,
     overlay,
+    ratingOverlay,
     analystData,
     includeNews,
     analysisAt,
@@ -1506,8 +1671,13 @@ export function buildAnalysisResponse(params: {
     marketSession,
     extended,
     earnings,
+    fundamentalScore,
+    compositeScore,
+    ratingSignal,
   } = params;
-  const analysisId = params.analysisId || `stock:${STOCK_ANALYSIS_ENGINE_VERSION}:${symbol}:${analysisAt}:${includeNews ? 'news' : 'core'}`;
+  const engineVersion = params.engineVersion || STOCK_ANALYSIS_ENGINE_VERSION;
+  const analysisId = params.analysisId || `stock:${engineVersion}:${symbol}:${analysisAt}:${includeNews ? 'news' : 'core'}`;
+  const resolvedRatingOverlay = ratingOverlay ?? overlay;
   const { stopLoss, takeProfit } = deriveTradeLevels(
     technical.signal,
     technical.currentPrice,
@@ -1525,6 +1695,16 @@ export function buildAnalysisResponse(params: {
     changePercent: technical.changePercent,
     signalScore: technical.signalScore,
     signal: technical.signal,
+    ratingSignal: ratingSignal ?? technical.signal,
+    ratingSummary: resolvedRatingOverlay.summary,
+    ratingAction: resolvedRatingOverlay.action,
+    ratingConfidence: resolvedRatingOverlay.confidence,
+    ratingWhyNow: resolvedRatingOverlay.whyNow,
+    ratingBullishFactors: resolvedRatingOverlay.bullishFactors,
+    ratingRiskFactors: resolvedRatingOverlay.riskFactors,
+    // fundamentalScore is optional — omit the key when the name is unscoreable.
+    ...(fundamentalScore != null ? { fundamentalScore } : {}),
+    compositeScore: compositeScore ?? technical.signalScore,
     trendStatus: technical.trendStatus,
     volumeStatus: technical.volumeStatus,
     macdStatus: technical.macdStatus,
@@ -1564,7 +1744,7 @@ export function buildAnalysisResponse(params: {
     analysisAt,
     stopLoss,
     takeProfit,
-    engineVersion: STOCK_ANALYSIS_ENGINE_VERSION,
+    engineVersion,
     analystConsensus: analystData.analystConsensus,
     priceTarget: analystData.priceTarget,
     recentUpgrades: analystData.recentUpgrades,
@@ -1600,6 +1780,14 @@ function buildEmptyAnalysisResponse(symbol: string, name: string, includeNews: b
     changePercent: 0,
     signalScore: 0,
     signal: '',
+    ratingSignal: '',
+    ratingSummary: '',
+    ratingAction: '',
+    ratingConfidence: '',
+    ratingWhyNow: '',
+    ratingBullishFactors: [],
+    ratingRiskFactors: [],
+    compositeScore: 0,
     trendStatus: '',
     volumeStatus: '',
     macdStatus: '',
@@ -1671,10 +1859,10 @@ export async function analyzeStock(
   const name = (req.name || symbol).trim().slice(0, 120) || symbol;
   const includeNews = req.includeNews === true;
   const nameSuffix = name !== symbol ? `:${name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 30).toLowerCase()}` : '';
-  // v5 -> v6: risk analytics add required response fields and headline-backed
-  // LLM overlays add news sentiment. Never replay a pre-contract response
-  // without them into the Pro UI or API.
-  const cacheKey = `market:analyze-stock:v6:${symbol}:${includeNews ? 'news' : 'no-news'}${nameSuffix}`;
+  // v7 -> v8: expose the fundamentals-blended rating through the additive
+  // ratingSignal field while preserving the legacy technical signal/signalScore
+  // pair for already-loaded web, desktop, and API clients.
+  const cacheKey = `market:analyze-stock:v8:${symbol}:${includeNews ? 'news' : 'no-news'}${nameSuffix}`;
 
   const fetchFreshAnalysis = async (): Promise<AnalyzeStockResponse | null> => {
     const [history, analystData] = await Promise.all([
@@ -1685,6 +1873,13 @@ export async function analyzeStock(
 
     const technical = buildTechnicalSnapshot(history.candles);
     technical.currency = history.currency || 'USD';
+    // Blend the fundamentals Yahoo already returned into the rating so a Strong
+    // buy/sell no longer fires on price action alone. Keep the technical
+    // signal/signalScore pair stable for older clients; the additive
+    // ratingSignal/compositeScore pair is the surfaced rating for new clients.
+    const fundamentalScore = computeFundamentalScore(analystData.fundamentals);
+    const compositeScore = computeCompositeScore(technical.signalScore, fundamentalScore);
+    const ratingSignal = deriveSignal(compositeScore, technical.trendStatus);
     // Session at analysis time (#4922d); '' when US hours don't apply to the
     // listing. The extended-hours fetch runs ONLY in pre/post — during the
     // regular session the current price is already live, and while closed
@@ -1700,7 +1895,16 @@ export async function analyzeStock(
         : Promise.resolve(null),
       fetchUpcomingEarnings(),
     ]);
-    const overlay = await buildAiOverlay(symbol, name, technical, headlines, analystData.fundamentals);
+    const overlays = await buildAiOverlay(
+      symbol,
+      name,
+      technical,
+      headlines,
+      analystData.fundamentals,
+      fundamentalScore,
+      compositeScore,
+      ratingSignal,
+    );
     const analysisAt = history.candles[history.candles.length - 1]?.timestamp || Date.now();
     const earnings = selectEarningsForSymbol(earningsCalendar, symbol, (options.now ?? new Date()).toISOString().slice(0, 10));
     const response = buildAnalysisResponse({
@@ -1709,8 +1913,12 @@ export async function analyzeStock(
       currency: history.currency || 'USD',
       technical,
       headlines,
-      overlay,
+      overlay: overlays.legacy,
+      ratingOverlay: overlays.rating,
       analystData,
+      fundamentalScore,
+      compositeScore,
+      ratingSignal,
       includeNews,
       analysisAt,
       generatedAt: new Date().toISOString(),

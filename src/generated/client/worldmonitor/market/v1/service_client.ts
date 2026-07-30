@@ -232,6 +232,8 @@ export interface AnalyzeStockResponse {
   extendedPrice?: number;
   extendedChangePercent?: number;
   fundamentals?: Fundamentals;
+  fundamentalScore?: number;
+  compositeScore: number;
   nextEarningsDate?: string;
   consensusEps?: number;
   consensusRevenue?: number;
@@ -239,6 +241,13 @@ export interface AnalyzeStockResponse {
   realizedVolatility: number;
   atr: number;
   maxDrawdown: number;
+  ratingSignal: string;
+  ratingSummary: string;
+  ratingAction: string;
+  ratingConfidence: string;
+  ratingWhyNow: string;
+  ratingBullishFactors: string[];
+  ratingRiskFactors: string[];
 }
 
 export interface StockAnalysisHeadline {
@@ -331,6 +340,7 @@ export interface BacktestStockResponse {
   generatedAt: string;
   evaluations: BacktestStockEvaluation[];
   engineVersion: string;
+  ratingBasis: string;
 }
 
 export interface BacktestStockEvaluation {
