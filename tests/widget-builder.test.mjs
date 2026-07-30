@@ -2145,7 +2145,9 @@ describe('WidgetChatModal — preflight 403 message branches on auth mode', () =
   it('resolvePreflightMessage takes usedTesterKey and branches Clerk path on isPro', () => {
     const fnIdx = modal.indexOf('function resolvePreflightMessage');
     assert.ok(fnIdx !== -1, 'resolvePreflightMessage not found');
-    const region = modal.slice(fnIdx, fnIdx + 1200);
+    const fnEnd = modal.indexOf('\nfunction setReadinessState', fnIdx);
+    assert.ok(fnEnd !== -1, 'resolvePreflightMessage boundary not found');
+    const region = modal.slice(fnIdx, fnEnd);
     assert.ok(
       region.includes('usedTesterKey'),
       'resolvePreflightMessage must take usedTesterKey to branch on auth mode',
