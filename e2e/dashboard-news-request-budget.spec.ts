@@ -104,6 +104,77 @@ async function fireHydrationTrigger(page: Page): Promise<void> {
   );
 }
 
+async function mountDeferredPanel(page: Page, panelKey: string) {
+  const panel = page.locator(`[data-panel="${panelKey}"]`);
+  await panel.scrollIntoViewIfNeeded();
+  await expect(panel).toBeVisible();
+  await expect(panel).not.toHaveAttribute('data-deferred-panel', 'true');
+  return panel;
+}
+
+/**
+ * Snapshot stored under one exact `digest:last-good:<variant>:<lang>` key.
+ *
+ * Reads the same IndexedDB envelope `src/services/persistent-cache.ts` writes,
+ * because this is the thing being protected: the entry `loadPersistedDigest`
+ * serves for up to 6 hours whenever the live digest is unreachable. Asserting on
+ * rendered panels instead would only prove what the CURRENT page load did, and
+ * the defect is that the poisoned entry outlives the page load that stored it.
+ *
+ * Returns `null` when nothing has been stored yet, so a caller can tell "no
+ * entry" from "an entry with no categories" — collapsing the two would let the
+ * poisoning assertion pass against a cache that was never written at all.
+ */
+type PersistedDigestSnapshot = {
+  categories: string[];
+  headlines: string[];
+};
+
+async function readPersistedDigest(
+  page: Page,
+  key = 'digest:last-good:full:en',
+): Promise<PersistedDigestSnapshot | null> {
+  return page.evaluate(async (exactKey) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      // Deliberately versionless: opening at a pinned version throws VersionError
+      // the day persistent-cache.ts bumps CACHE_DB_VERSION, which would red this
+      // spec for a reason that has nothing to do with what it asserts.
+      const request = indexedDB.open('worldmonitor_persistent_cache');
+      request.onupgradeneeded = () => {
+        // Only fires when the app has not created the database yet. Mirror
+        // persistent-cache.ts so this read leaves a usable database behind
+        // rather than one with no object store.
+        const upgraded = request.result;
+        if (!upgraded.objectStoreNames.contains('entries')) {
+          upgraded.createObjectStore('entries', { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    if (!db.objectStoreNames.contains('entries')) return null;
+    const entry = await new Promise<{
+      key: string;
+      data?: { categories?: Record<string, { items?: Array<{ title?: string }> }> };
+    } | undefined>(
+      (resolve, reject) => {
+        const tx = db.transaction('entries', 'readonly');
+        const request = tx.objectStore('entries').get(exactKey);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      },
+    );
+    if (!entry) return null;
+    const categories = entry.data?.categories ?? {};
+    return {
+      categories: Object.keys(categories),
+      headlines: Object.values(categories)
+        .flatMap((category) => category.items ?? [])
+        .map((item) => item.title ?? ''),
+    };
+  }, key);
+}
+
 async function seedFreshAnonymousFullVariant(
   page: Page,
   extraPanels: Record<string, { name: string; enabled: boolean; priority: number }> = {},
@@ -126,9 +197,50 @@ async function seedFreshAnonymousFullVariant(
   }, extraPanels as Record<string, unknown>);
 }
 
+/** Categories the healthy stub digest covers. */
+const HEALTHY_DIGEST_CATEGORIES = ['politics', 'intel'];
+const HEALTHY_POLITICS_HEADLINE = 'Healthy last-good politics headline';
+const PARTIAL_POLITICS_HEADLINE = 'Fresh partial politics headline';
+
+function digestBody(categoryKeys: readonly string[], politicsHeadline?: string): string {
+  return JSON.stringify({
+    categories: Object.fromEntries(categoryKeys.map((key) => [
+      key,
+      {
+        items: key === 'politics' && politicsHeadline
+          ? [{
+              source: 'BBC World',
+              title: politicsHeadline,
+              link: `https://example.com/${encodeURIComponent(politicsHeadline)}`,
+              publishedAt: Date.now(),
+              isAlert: false,
+            }]
+          : [],
+      },
+    ])),
+    feedStatuses: {},
+    generatedAt: new Date(0).toISOString(),
+  });
+}
+
 async function installNewsRequestAccounting(
   page: Page,
-  options: { failDigestTimes?: number; emptyDigestTimes?: number } = {},
+  options: {
+    failDigestTimes?: number;
+    emptyDigestTimes?: number;
+    /**
+     * From request `after` + 1 onward, serve a digest covering only `categories`.
+     *
+     * The prefix options above can only produce degradation-then-recovery, which
+     * never exercises what a degraded response does to a cache that ALREADY holds
+     * a healthy digest. `categories: []` is the empty-200 outage; a shorter list
+     * than HEALTHY_DIGEST_CATEGORIES is the partial one.
+     */
+    degradeDigestAfter?: { after: number; categories: readonly string[] };
+    healthyPoliticsHeadline?: string;
+    degradedPoliticsHeadline?: string;
+    failDigestLanguages?: readonly string[];
+  } = {},
 ): Promise<NewsRequestLog> {
   const log: NewsRequestLog = { digestUrls: [], rssProxyUrls: [] };
 
@@ -143,6 +255,11 @@ async function installNewsRequestAccounting(
   // bearing bucket would exercise rendering, not the request budget.
   await page.route(DIGEST_GLOB, async (route) => {
     log.digestUrls.push(route.request().url());
+    const requestLanguage = new URL(route.request().url()).searchParams.get('lang') ?? 'en';
+    if (options.failDigestLanguages?.includes(requestLanguage)) {
+      await route.fulfill({ status: 503, contentType: 'text/plain', body: 'digest unavailable' });
+      return;
+    }
     // Fail only the first N attempts. The data loader's own circuit breaker opens
     // after 2 consecutive failures and then serves from cache WITHOUT a network
     // request, so an always-failing stub would stop producing observable attempts
@@ -155,21 +272,22 @@ async function installNewsRequestAccounting(
     // the outage shape the server actually emits, and the one a plain non-null
     // check would mistake for a successful load.
     if (log.digestUrls.length <= (options.failDigestTimes ?? 0) + (options.emptyDigestTimes ?? 0)) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: digestBody([]) });
+      return;
+    }
+    const degrade = options.degradeDigestAfter;
+    if (degrade && log.digestUrls.length > degrade.after) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ categories: {}, feedStatuses: {}, generatedAt: new Date(0).toISOString() }),
+        body: digestBody(degrade.categories, options.degradedPoliticsHeadline),
       });
       return;
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        categories: { politics: { items: [] }, intel: { items: [] } },
-        feedStatuses: {},
-        generatedAt: new Date(0).toISOString(),
-      }),
+      body: digestBody(HEALTHY_DIGEST_CATEGORIES, options.healthyPoliticsHeadline),
     });
   });
 
@@ -304,6 +422,207 @@ test.describe('dashboard news request budget (#5376)', () => {
       `a 200 digest carrying no categories leaves every panel empty, so it must stay ` +
         `retryable exactly like a failed request (attempts: ${log.digestUrls.length})`,
     ).toBeGreaterThanOrEqual(2);
+  });
+
+  // The same degraded 200, one layer down: what it does to the fallback rather
+  // than to the page load in front of it. `tryFetchDigest` counted the categories,
+  // logged the count, and then ignored it — writing the empty body to BOTH
+  // `lastGoodDigest` and the `digest:last-good` persistent entry, where
+  // `loadPersistedDigest` kept serving it for `persistedDigestMaxAgeMs` (6 hours).
+  // One degraded response therefore poisoned the fallback that exists to survive
+  // degradation, and unlike the in-page symptom (bounded by #5376's `landed`
+  // check) the poisoned entry survives reloads. It also reset the circuit breaker,
+  // so a server emitting empty-but-200 digests never tripped it (#5877).
+  test('a degraded 200 digest does not overwrite the persisted last-good digest', async ({ page }) => {
+    // The two halves of the rejection, watched separately. Only the accept path
+    // logs "Digest fetched", and only the reject path reaches the catch — so the
+    // pair distinguishes "rejected" from "accepted but happened not to be written",
+    // which the cache assertion alone cannot: with the throw removed, the persist
+    // guard would decline the write anyway (0 categories is fewer than 2) and the
+    // cache would survive for the wrong reason.
+    const acceptedDigestLogs: string[] = [];
+    const fallbackWarnings: string[] = [];
+    page.on('console', (message) => {
+      const text = message.text();
+      if (text.includes('[News] Digest fetched:')) acceptedDigestLogs.push(text);
+      if (text.includes('[News] Digest fetch failed, using fallback')) fallbackWarnings.push(text);
+    });
+
+    await seedFreshAnonymousFullVariant(page);
+    // Healthy on the first request, degraded on every one after it: the shape
+    // that overwrites, which a degraded-then-recovering stub can never produce.
+    const log = await installNewsRequestAccounting(page, {
+      degradeDigestAfter: { after: 1, categories: [] },
+      healthyPoliticsHeadline: HEALTHY_POLITICS_HEADLINE,
+    });
+
+    const firstDigest = page.waitForRequest(DIGEST_GLOB);
+    await page.goto('/');
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await firstDigest;
+
+    // Positive control: the healthy digest must actually reach the cache, or the
+    // "still intact" assertion below would pass against an entry that was never
+    // written. persistDigest is fire-and-forget, so poll rather than assume.
+    await expect
+      .poll(
+        async () => (await readPersistedDigest(page))?.categories.length ?? 0,
+        { message: 'the healthy digest must land in digest:last-good before it can be poisoned' },
+      )
+      .toBe(2);
+
+    // A reload is what makes this different from the in-page symptom: a fresh
+    // DataLoader with an empty `lastGoodDigest` re-fetches, gets the degraded
+    // body, and is exactly where the overwrite happened in production.
+    await page.reload();
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await page.waitForTimeout(SECOND_LOAD_SETTLE_MS);
+
+    // The degraded response has to have actually been served, or nothing was
+    // asked to overwrite anything and the assertion below is vacuous.
+    expect(
+      log.digestUrls.length,
+      `the reload must issue its own digest request for the degraded body to be delivered ` +
+        `(attempts: ${log.digestUrls.length})`,
+    ).toBeGreaterThanOrEqual(2);
+
+    expect(
+      (await readPersistedDigest(page))?.categories.sort(),
+      `a 200 carrying no categories must not replace digest:last-good — it is the fallback ` +
+        `every later page load reads when the digest is unreachable, and overwriting it with ` +
+        `an empty body renders every preset category empty for up to 6 hours (#5877)`,
+    ).toEqual(['intel', 'politics']);
+
+    const politicsPanel = await mountDeferredPanel(page, 'politics');
+    await expect(
+      politicsPanel,
+      'the reload must consume the cached fallback, not merely leave it intact in IndexedDB',
+    ).toContainText(HEALTHY_POLITICS_HEADLINE);
+
+    // The empty body must never have been treated as a fetched digest. Only the
+    // healthy first response may log an acceptance, and only with real coverage —
+    // "Digest fetched: 0 categories" is precisely the line the bug used to emit.
+    expect(
+      acceptedDigestLogs,
+      `a 200 with no categories must not be accepted as a digest; accepted: ${acceptedDigestLogs.join(' | ')}`,
+    ).toEqual(['[News] Digest fetched: 2 categories']);
+
+    // ...and it has to have been routed into the failure path, so the breaker
+    // counts it. Without this the assertion above would also pass if the degraded
+    // response had simply never been delivered.
+    expect(
+      fallbackWarnings.join(' | '),
+      'the degraded digest must fall through to the fallback path that counts against the breaker',
+    ).toContain('digest returned 0 categories');
+  });
+
+  // The second degraded shape, and the judgment call: a 200 that covers SOME
+  // categories, but fewer than the entry already cached. It is real data for the
+  // categories it names, so the load uses it — but writing it over a richer
+  // `digest:last-good` trades the fallback down for every later page load, which
+  // is the one that reads this entry when the digest is unreachable (#5877).
+  test('a partial digest is used for the load but does not shrink the persisted last-good digest', async ({ page }) => {
+    const acceptedDigestLogs: string[] = [];
+    page.on('console', (message) => {
+      const text = message.text();
+      if (text.includes('[News] Digest fetched:')) acceptedDigestLogs.push(text);
+    });
+
+    await seedFreshAnonymousFullVariant(page);
+    // Healthy (2 categories) first, then 1 of the 2 — shrunken, not empty.
+    const log = await installNewsRequestAccounting(page, {
+      degradeDigestAfter: { after: 1, categories: ['politics'] },
+      healthyPoliticsHeadline: HEALTHY_POLITICS_HEADLINE,
+      degradedPoliticsHeadline: PARTIAL_POLITICS_HEADLINE,
+    });
+
+    const firstDigest = page.waitForRequest(DIGEST_GLOB);
+    await page.goto('/');
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await firstDigest;
+
+    await expect
+      .poll(
+        async () => (await readPersistedDigest(page))?.categories.length ?? 0,
+        { message: 'the healthy digest must land in digest:last-good before it can be shrunk' },
+      )
+      .toBe(2);
+
+    await page.reload();
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await page.waitForTimeout(SECOND_LOAD_SETTLE_MS);
+
+    expect(
+      log.digestUrls.length,
+      `the reload must issue its own digest request for the partial body to be delivered ` +
+        `(attempts: ${log.digestUrls.length})`,
+    ).toBeGreaterThanOrEqual(2);
+
+    // The partial digest must be ACCEPTED — this is what separates it from the
+    // empty-200 case. Without this the test would pass if the partial digest were
+    // rejected outright, which would be a different (and wrong) behaviour.
+    expect(
+      acceptedDigestLogs,
+      `a partial digest is real data for the categories it covers and must still be used; ` +
+        `accepted: ${acceptedDigestLogs.join(' | ')}`,
+    ).toEqual(['[News] Digest fetched: 2 categories', '[News] Digest fetched: 1 categories']);
+
+    expect(
+      (await readPersistedDigest(page))?.categories.sort(),
+      `the cached last-good digest must keep its wider coverage — a 1-category digest ` +
+        `written over a 2-category entry is a strict loss for the next page load (#5877)`,
+    ).toEqual(['intel', 'politics']);
+
+    const politicsPanel = await mountDeferredPanel(page, 'politics');
+    await expect(
+      politicsPanel,
+      'the current load must render the accepted partial digest even while retaining the richer fallback',
+    ).toContainText(PARTIAL_POLITICS_HEADLINE);
+  });
+
+  test('a failing language scope never falls back to another language digest', async ({ page }) => {
+    await seedFreshAnonymousFullVariant(page);
+    const log = await installNewsRequestAccounting(page, {
+      healthyPoliticsHeadline: HEALTHY_POLITICS_HEADLINE,
+      failDigestLanguages: ['fr'],
+    });
+
+    await page.goto('/?lang=en');
+    await expect
+      .poll(
+        async () => (await readPersistedDigest(page, 'digest:last-good:full:en'))?.headlines ?? [],
+        { message: 'the English digest must be persisted under its exact scope' },
+      )
+      .toContain(HEALTHY_POLITICS_HEADLINE);
+
+    await page.goto('/?lang=fr');
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await page.waitForTimeout(SECOND_LOAD_SETTLE_MS);
+
+    expect(
+      log.digestUrls.some((url) => new URL(url).searchParams.get('lang') === 'fr'),
+      'the French scope must actually request its own digest before fallback isolation is asserted',
+    ).toBe(true);
+    const politicsPanel = await mountDeferredPanel(page, 'politics');
+    await expect(
+      politicsPanel,
+      'French digest failure must not render the English last-good entry',
+    ).not.toContainText(HEALTHY_POLITICS_HEADLINE);
+    expect(await readPersistedDigest(page, 'digest:last-good:full:fr')).toBeNull();
+    expect(
+      (await readPersistedDigest(page, 'digest:last-good:full:en'))?.headlines,
+      'the English entry remains isolated under its own exact key',
+    ).toContain(HEALTHY_POLITICS_HEADLINE);
   });
 
   // A news panel that mounts AFTER the load (below the fold, deferred) is backfilled

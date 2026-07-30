@@ -27,6 +27,14 @@ import {
   type NewsCategoryLoadOptions,
   type NewsIntelLoadOptions,
 } from '@/app/news-loader-sequencing';
+import {
+  countDigestCategories,
+  DigestPersistenceQueue,
+  digestCacheKey,
+  getScopedDigest,
+  retainRicherScopedDigest,
+  type ScopedDigest,
+} from '@/app/news-digest-acceptance';
 import { INTEL_HOTSPOTS, CONFLICT_ZONES } from '@/config/geo';
 import { tokenizeForMatch, matchKeyword } from '@/utils/keyword-match';
 import { withTimeout } from '@/utils/with-timeout';
@@ -407,7 +415,18 @@ export class DataLoaderManager implements AppModule {
   private readonly perFeedFallbackCategoryFeedLimit = 3;
   private readonly perFeedFallbackIntelFeedLimit = 6;
   private readonly perFeedFallbackBatchSize = 2;
-  private lastGoodDigest: ListFeedDigestResponse | null = null;
+  private lastGoodDigest: ScopedDigest<ListFeedDigestResponse> | null = null;
+  private readonly digestPersistenceQueue = new DigestPersistenceQueue<ListFeedDigestResponse>({
+    cacheMaxAgeMs: this.persistedDigestMaxAgeMs,
+    read: (key) => getPersistentCache<ListFeedDigestResponse>(key),
+    write: (key, data) => setPersistentCache(key, data),
+    onSkipPersist: (fetchedCategoryCount, cachedCategoryCount) => {
+      console.warn(
+        `[News] Digest covers ${fetchedCategoryCount} categories, fewer than the ` +
+        `${cachedCategoryCount} already cached — keeping the cached last-good digest`,
+      );
+    },
+  });
   /**
    * Work-list signature of the last news load that actually landed data, or
    * `null` if none has. Gates loadAllData()'s `news` task — see
@@ -620,10 +639,15 @@ export class DataLoaderManager implements AppModule {
 
   private async tryFetchDigest(): Promise<ListFeedDigestResponse | null> {
     const now = Date.now();
+    // Capture request and persistence scope together. Sampling the language again
+    // after the response would let an old-language request populate the new
+    // language's cache when the user switches languages in flight.
+    const requestLanguage = getCurrentLanguage();
+    const requestKey = this.digestCacheKey(requestLanguage);
 
     if (this.digestBreaker.state === 'open') {
       if (now < this.digestBreaker.cooldownUntil) {
-        return this.lastGoodDigest ?? await this.loadPersistedDigest();
+        return this.getRetainedDigest(requestKey) ?? await this.loadPersistedDigest(requestKey);
       }
       this.digestBreaker.state = 'half-open';
     }
@@ -631,17 +655,32 @@ export class DataLoaderManager implements AppModule {
     try {
       markLcpDebug('wm:data:feed-digest-start');
       const resp = await publicRpcFetch(
-        toApiUrl(`/api/news/v1/list-feed-digest?variant=${SITE_VARIANT}&lang=${getCurrentLanguage()}`),
+        toApiUrl(`/api/news/v1/list-feed-digest?variant=${SITE_VARIANT}&lang=${requestLanguage}`),
         { signal: AbortSignal.timeout(this.digestRequestTimeoutMs) },
       );
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json() as ListFeedDigestResponse;
-      const catCount = Object.keys(data.categories ?? {}).length;
+      const catCount = countDigestCategories(data);
+      // A 200 carrying no categories is an outage wearing a success status: every
+      // preset category renders empty behind it, because per-feed fallback is off
+      // on web. Throwing routes it into the catch below, which is the whole point
+      // — the breaker counts it, `lastGoodDigest` keeps the real digest it had, and
+      // `digest:last-good` is left alone instead of being poisoned for 6 hours with
+      // the empty body the fallback exists to survive (#5877).
+      if (catCount === 0) throw new Error('digest returned 0 categories');
       markLcpDebug('wm:data:feed-digest-ready', { categories: catCount });
       console.info(`[News] Digest fetched: ${catCount} categories`);
-      this.lastGoodDigest = data;
-      this.persistDigest(data);
+      this.persistDigest(requestKey, data);
       this.digestBreaker = { state: 'closed', failures: 0, cooldownUntil: 0 };
+
+      const currentKey = this.digestCacheKey();
+      if (currentKey !== requestKey) {
+        // The response is valid for the scope it requested and may refresh that
+        // scope's persistent cache, but it must not become live data or an
+        // in-memory fallback for the language now active.
+        return this.getRetainedDigest(currentKey) ?? await this.loadPersistedDigest(currentKey);
+      }
+      this.lastGoodDigest = retainRicherScopedDigest(this.lastGoodDigest, requestKey, data);
       return data;
     } catch (e) {
       markLcpDebug('wm:data:feed-digest-error');
@@ -651,20 +690,63 @@ export class DataLoaderManager implements AppModule {
         this.digestBreaker.state = 'open';
         this.digestBreaker.cooldownUntil = now + this.digestBreakerCooldownMs;
       }
-      return this.lastGoodDigest ?? await this.loadPersistedDigest();
+      const currentKey = this.digestCacheKey();
+      return this.getRetainedDigest(currentKey) ?? await this.loadPersistedDigest(currentKey);
     }
   }
 
-  private persistDigest(data: ListFeedDigestResponse): void {
-    setPersistentCache('digest:last-good', data).catch(() => {});
+  /**
+   * Write the fresh digest to `digest:last-good`, unless that would shrink it.
+   *
+   * A PARTIAL digest is the second degraded shape (#5877): a 200 that covers
+   * some categories but fewer than the entry already cached. The response is
+   * real data, so the caller uses it for this load — but overwriting a richer
+   * `digest:last-good` with it is a strict loss for the NEXT page load, which is
+   * the one that falls back to this entry when the digest is unreachable.
+   *
+   * Deliberately fire-and-forget and off the fetch path: the comparison needs a
+   * persistent-cache READ, and `tryFetchDigest` sits on the news first-paint
+   * path, so awaiting an IndexedDB round trip there would buy correctness for
+   * the fallback at the cost of the load it is protecting. A read failure is
+   * treated as "nothing cached" and the write proceeds — the previous behaviour.
+   */
+  private persistDigest(key: string, data: ListFeedDigestResponse): void {
+    this.digestPersistenceQueue.enqueue(key, data);
   }
 
-  private async loadPersistedDigest(): Promise<ListFeedDigestResponse | null> {
+  /**
+   * Cache key for the last-good digest, scoped exactly like the request that
+   * produced it.
+   *
+   * The digest is fetched per `variant` and `lang`, but the entry used to be
+   * stored under one global key — so a variant or language switch compared, and
+   * fell back to, a digest built for a different category set entirely. That was
+   * survivable while every successful fetch overwrote the entry unconditionally;
+   * it is not survivable now that coverage decides whether to overwrite, because
+   * a wider digest from the OTHER variant would veto persisting the current
+   * one's for up to 6 hours (#5877).
+   *
+   * Scoping also retires every entry written under the old key, which is the
+   * migration path for a cache already poisoned by a degraded digest: those
+   * entries simply become unreachable rather than needing to be detected.
+   */
+  private digestCacheKey(language = getCurrentLanguage()): string {
+    return digestCacheKey(SITE_VARIANT, language);
+  }
+
+  private getRetainedDigest(key = this.digestCacheKey()): ListFeedDigestResponse | null {
+    return getScopedDigest(this.lastGoodDigest, key);
+  }
+
+  private async loadPersistedDigest(key = this.digestCacheKey()): Promise<ListFeedDigestResponse | null> {
     try {
-      const envelope = await getPersistentCache<ListFeedDigestResponse>('digest:last-good');
+      const envelope = await getPersistentCache<ListFeedDigestResponse>(key);
       if (!envelope) return null;
       if (Date.now() - envelope.updatedAt > this.persistedDigestMaxAgeMs) return null;
-      this.lastGoodDigest = envelope.data;
+      // Do not let an IndexedDB read started for a previous language complete
+      // into the new language's in-memory fallback.
+      if (key !== this.digestCacheKey()) return null;
+      this.lastGoodDigest = retainRicherScopedDigest(this.lastGoodDigest, key, envelope.data);
       return envelope.data;
     } catch { return null; }
   }
@@ -1571,7 +1653,8 @@ export class DataLoaderManager implements AppModule {
       console.warn('[News] Digest fetch failed before category load:', error);
       return null;
     });
-    const fallbackDigest = this.lastGoodDigest ?? await this.loadPersistedDigest();
+    const fallbackKey = this.digestCacheKey();
+    const fallbackDigest = this.getRetainedDigest(fallbackKey) ?? await this.loadPersistedDigest(fallbackKey);
 
     const categories = this.resolveEnabledNewsCategories();
     // Snapshot beside the categories: `ctx.disabledSources` is mutated IN PLACE by
