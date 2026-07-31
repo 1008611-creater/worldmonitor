@@ -27,11 +27,14 @@ afterEach(() => {
 
 test('default _loadPrevious retries the Redis read and warns loudly when it stays down', async () => {
   let redisCalls = 0;
+  let nowCalls = 0;
   const warns = [];
   console.warn = (...args) => { warns.push(args.join(' ')); };
-  // Collapse retry backoffs so exhaustion doesn't sleep for real.
+  // Collapse only the Redis retry backoffs so exhaustion doesn't sleep for
+  // real. Keep the ordering-read budget timer intact: collapsing every large
+  // timer also collapses the operation's deadline and races the retry ladder.
   globalThis.setTimeout = (cb, ms, ...args) =>
-    originalSetTimeout(cb, ms >= 500 ? 0 : ms, ...args);
+    originalSetTimeout(cb, ms === 1000 || ms === 2000 ? 0 : ms, ...args);
   globalThis.fetch = async () => {
     redisCalls += 1;
     const err = new Error('The operation was aborted due to timeout');
@@ -39,11 +42,14 @@ test('default _loadPrevious retries the Redis read and warns loudly when it stay
     throw err;
   };
 
-  // Soft budget pre-spent: no topic fetch starts, all 6 topics are empty, so
-  // the cache-merge consults the DEFAULT _loadPrevious (deliberately not
-  // injected here — this test exercises the real wiring).
+  // Give the ordering read a deterministic budget, then advance the injected
+  // run clock before the topic loop. A real 1ms budget made this test
+  // load-dependent: slow CI could spend it before the ordering operation was
+  // even invoked, observing only the later cache-merge read.
   const out = await fetchAllTopics({
-    _softBudgetMs: 1,
+    _now: () => (++nowCalls <= 2 ? 0 : 40_000),
+    _softBudgetMs: 40_000,
+    _minRequestBudgetMs: 35_000,
     _sleep: async () => {},
     _fetchArticles: async () => { throw new Error('must not fetch topics'); },
     _fetchTimeline: async () => [],
