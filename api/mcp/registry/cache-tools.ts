@@ -1155,17 +1155,17 @@ export const CACHE_TOOLS: ToolDef[] = [
     name: 'get_prediction_markets',
     _uiResourceUri: PREDICTION_MARKETS_UI_URI,
     _outputBudgetBytes: 131072,
-    description: 'Active Polymarket event contracts with current probabilities. Covers geopolitical, economic, and election prediction markets.',
+    description: 'Prediction markets: geopolitical/elections, tagged tech (AI/crypto/science), finance/economics or untagged fallback. Contracts include current probabilities. Kalshi currently supplies no classifier tags, so source=kalshi with category=tech returns no records and other non-geopolitical Kalshi records fall back to finance.',
     inputSchema: {
       type: 'object',
       properties: {
         category: {
           type: 'string',
           enum: ['geopolitical', 'tech', 'finance'],
-          description: 'Restrict to one market category bucket. Omit for all three.',
+          description: 'Restrict to one market category bucket. Omit for all three. Finance also owns untagged non-geopolitical records.',
         },
         query: { type: 'string', description: 'Keep only markets whose title contains this text (case-insensitive).' },
-        source: { type: 'string', enum: ['kalshi', 'polymarket'], description: 'Filter to one prediction-market source.' },
+        source: { type: 'string', enum: ['kalshi', 'polymarket'], description: 'Filter to one prediction-market source. Kalshi currently provides no classifier tags, so source=kalshi with category=tech returns no records.' },
         limit: { type: 'number', description: 'Cap each category bucket to at most this many markets (default 30, pass 0 for no cap).' },
       },
       required: [],
