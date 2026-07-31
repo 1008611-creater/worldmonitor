@@ -8,27 +8,15 @@
 // week-old declining trend would keep emitting "media tone deterioration"
 // cross-source signals stamped as freshly detected for days. The extractor
 // must skip payloads it cannot date or that are older than the signal-grade
-// window, falling through to the bundled-canonical fallback.
+// window.
+//
+// (#5870 removed the bundled-canonical fallback this used to fall through to:
+// it read topic.avgTone/tone, which intelligence:gdelt-intel:v1 has never
+// published, so it could not fire even once the envelope was unwrapped.)
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
-import { CII_RISK_SCORE_CACHE_KEYS } from '../scripts/_cii-risk-cache-keys.mjs';
-
-const seedSrc = readFileSync('scripts/seed-cross-source-signals.mjs', 'utf8');
-
-const pureSrc = seedSrc
-  .replace(/^import\s.*$/gm, '')
-  .replace(/loadEnvFile\([^)]+\);\r?\n/, '')
-  .replace(/async function readAllSourceKeys[\s\S]*?\r?\n}\r?\n\r?\n\/\/ ── Signal extractors/m, '// readAllSourceKeys removed for unit test\n\n// ── Signal extractors')
-  .replace(/runSeed\('intelligence'[\s\S]*$/m, '')
-  .replace(/^export\s+(function\s+declareRecords)/m, '$1');
-
-const ctx = vm.createContext({ console, Date, Math, Number, Array, Map, Set, String, RegExp, CII_RISK_SCORE_CACHE_KEYS });
-vm.runInContext(`${pureSrc}\n;globalThis.__exports = { extractMediaToneDeterioration };`, ctx);
-
-const { extractMediaToneDeterioration } = ctx.__exports;
+import { extractMediaToneDeterioration } from '../scripts/seed-cross-source-signals.mjs';
 
 const DECLINING_SERIES = [
   { date: '2026-07-18', value: -0.5 },
@@ -81,9 +69,7 @@ describe('extractMediaToneDeterioration trend-span guard (#5863 review)', () => 
     const signals = extractMediaToneDeterioration({
       'gdelt:intel:tone:military': { data: dense, fetchedAt: new Date().toISOString() },
     });
-    // Length, not deepEqual: the extractor runs in a vm realm, so its arrays
-    // have a different prototype and deepStrictEqual([], []) fails.
-    assert.equal(signals.length, 0, '45 minutes of small-sample tone is not a deterioration trend');
+    assert.deepEqual(signals, [], '45 minutes of small-sample tone is not a deterioration trend');
   });
 
   it('still emits when a dense series covers a real multi-day decline', () => {
