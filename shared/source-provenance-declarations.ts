@@ -533,4 +533,10 @@ export const CONFIGURED_SOURCE_PROVENANCE_DECLARATIONS: Readonly<
   "Yonhap News": { risk: 'unknown', type: 'unknown' },
   "YourStory": { risk: 'unknown', type: 'reviewed' },
   "ZDNet": { risk: 'unknown', type: 'unknown' },
+  "Hromadske EN": { risk: 'reviewed', type: 'reviewed' },
+  "ISW": { risk: 'reviewed', type: 'reviewed' },
+  "NV EN": { risk: 'reviewed', type: 'reviewed' },
+  "Suspilne": { risk: 'reviewed', type: 'reviewed' },
+  "Ukrainska Pravda EN": { risk: 'reviewed', type: 'reviewed' },
+  "Ukrinform": { risk: 'reviewed', type: 'reviewed' },
 });
