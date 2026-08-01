@@ -192,6 +192,17 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'NV EN', url: rss('https://news.google.com/rss/search?q=site:english.nv.ua+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Hromadske EN', url: rss('https://news.google.com/rss/search?q=site:hromadske.ua+when:3d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Moscow Times', url: rss('https://www.themoscowtimes.com/rss/news') },
+    // Caucasus (#5953) — secondary Russian periphery / BRI hinterland
+    { name: 'Civil.ge', url: rss('https://civil.ge/feed/') },
+    { name: 'OC Media', url: rss('https://oc-media.org/feed/') },
+    { name: 'JAMnews', url: rss('https://jam-news.net/feed/') },
+    // Risk-tagged state wires — Azertag (Azerbaijan) / Armenpress (Armenia)
+    { name: 'Azertag', url: rss('https://news.google.com/rss/search?q=site:azertag.az+when:3d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'Armenpress', url: rss('https://news.google.com/rss/search?q=site:armenpress.am+when:3d&hl=en-US&gl=US&ceid=US:en') },
+    // Belarus / Moldova (#5953) — secondary pressure line
+    { name: 'Zerkalo', url: rss('https://news.google.com/rss/search?q=site:zerkalo.io+when:2d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'NewsMaker', url: rss('https://newsmaker.md/en/feed/') },
+    { name: 'Ziarul de Gardă', url: rss('https://www.zdg.md/feed/'), lang: 'ro' },
   ],
   middleeast: [
     { name: 'BBC Middle East', url: rss('https://feeds.bbci.co.uk/news/world/middle_east/rss.xml') },
@@ -296,6 +307,15 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'Channels TV', url: rss('https://www.channelstv.com/feed/') },
     { name: 'Daily Trust', url: rss('https://dailytrust.com/feed/') },
     { name: 'ThisDay', url: rss('https://www.thisdaylive.com/feed') },
+    // Horn of Africa
+    { name: 'Radio Tamazuj', url: rss('https://www.radiotamazuj.org/en/feed') },
+    { name: 'The Reporter Ethiopia', url: rss('https://www.thereporterethiopia.com/feed/') },
+    // DRC / Great Lakes
+    { name: 'Actualite.cd', url: rss('https://actualite.cd/feed'), lang: 'fr' },
+    { name: 'Radio Okapi', url: rss('https://www.radiookapi.net/feed'), lang: 'fr' },
+    // West Africa (non-Nigeria)
+    { name: 'MyJoyOnline', url: rss('https://www.myjoyonline.com/feed/') },
+    { name: 'Le Quotidien', url: rss('https://lequotidien.sn/feed/'), lang: 'fr' },
   ],
   latam: [
     { name: 'Latin America', url: rss('https://news.google.com/rss/search?q=(Brazil+OR+Mexico+OR+Argentina+OR+Venezuela+OR+Colombia)+when:2d&hl=en-US&gl=US&ceid=US:en') },
@@ -356,6 +376,11 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'Guardian Australia', url: rss('https://www.theguardian.com/australia-news/rss') },
     // Pacific Islands
     { name: 'Island Times (Palau)', url: rss('https://islandtimes.org/feed/') },
+    // Central Asia (#5953) — Russia rear area, China BRI, sanctions leakage
+    { name: 'Eurasianet', url: rss('https://eurasianet.org/feed/') },
+    { name: 'RFE/RL Central Asia', url: rss('https://news.google.com/rss/search?q=site:rferl.org+Central+Asia+when:3d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'The Astana Times', url: rss('https://astanatimes.com/feed/') },
+    { name: 'The Times of Central Asia', url: rss('https://timesca.com/feed/') },
   ],
   energy: [
     { name: 'Oil & Gas', url: rss('https://news.google.com/rss/search?q=(oil+price+OR+OPEC+OR+"natural+gas"+OR+pipeline+OR+LNG)+when:2d&hl=en-US&gl=US&ceid=US:en') },
@@ -1075,12 +1100,14 @@ export const DEFAULT_ENABLED_SOURCES: Record<string, string[]> = {
     ...FRONTLINE_EUROPE_PROTECTED_SOURCES,
     'Ukrainska Pravda EN',
     'NV EN',
+    // Periphery packs (#5953) — Caucasus, Belarus/Moldova
+    'Civil.ge', 'OC Media', 'NewsMaker',
   ],
 
   middleeast: ['BBC Middle East', 'Al Jazeera', 'Al Arabiya', 'Guardian ME', 'BBC Persian', 'Iran International', 'IRNA', 'Mehr News', 'Haaretz', 'Jerusalem Post', 'Ynetnews', 'Asharq News', 'The National'],
-  africa: ['BBC Africa', 'News24', 'Africanews', 'Jeune Afrique', 'Africa News', 'Premium Times', 'Channels TV', 'Sahel Crisis'],
+  africa: ['BBC Africa', 'News24', 'Africanews', 'Jeune Afrique', 'Africa News', 'Premium Times', 'Channels TV', 'Sahel Crisis', 'Radio Tamazuj', 'Actualite.cd'],
   latam: ['BBC Latin America', 'Reuters LatAm', 'InSight Crime', 'Mexico News Daily', 'Clarín', 'Primicias', 'Infobae Americas', 'El Universo'],
-  asia: ['BBC Asia', 'The Diplomat', 'South China Morning Post', 'Reuters Asia', 'Nikkei Asia', 'CNA', 'Asia News', 'The Hindu'],
+  asia: ['BBC Asia', 'The Diplomat', 'South China Morning Post', 'Reuters Asia', 'Nikkei Asia', 'CNA', 'Asia News', 'The Hindu', 'Eurasianet', 'The Astana Times'],
   tech: ['Hacker News', 'Ars Technica', 'The Verge', 'MIT Tech Review'],
   ai: ['AI News', 'VentureBeat AI', 'The Verge AI', 'MIT Tech Review', 'ArXiv AI'],
   finance: ['CNBC', 'MarketWatch', 'Yahoo Finance', 'Financial Times', 'Reuters Business'],
