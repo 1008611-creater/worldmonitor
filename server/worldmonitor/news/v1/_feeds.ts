@@ -194,11 +194,23 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'Aaj Tak', url: 'https://www.aajtak.in/rssfeeds/?id=home', lang: 'hi' },
       { name: 'NDTV India', url: 'https://feeds.feedburner.com/ndtvkhabar-latest', lang: 'hi' },
       { name: 'Amar Ujala', url: 'https://www.amarujala.com/rss/national.xml', lang: 'hi' },
-      // Central Asia (#5953) — Russia rear area, China BRI, sanctions leakage
+// Central Asia (#5953) — Russia rear area, China BRI, sanctions leakage
       { name: 'Eurasianet', url: 'https://eurasianet.org/feed/' },
       { name: 'RFE/RL Central Asia', url: gn('site:rferl.org Central+Asia when:3d') },
       { name: 'The Astana Times', url: 'https://astanatimes.com/feed/' },
       { name: 'The Times of Central Asia', url: 'https://timesca.com/feed/' },
+      // Taiwan (#5954)
+      { name: 'Focus Taiwan', url: 'https://focustaiwan.tw/search/simple/all/1/rss' },
+      { name: 'Taipei Times', url: 'https://www.taipeitimes.com/feeds/front.xml' },
+      { name: 'Taiwan News', url: 'https://www.taiwannews.com.tw/rss' },
+      // Pakistan (#5954)
+      { name: 'Dawn', url: 'https://www.dawn.com/feeds/home/' },
+      { name: 'Geo News', url: gn('site:geo.tv when:2d') },
+      // SE Asia security (#5954)
+      { name: 'Jakarta Post', url: 'https://www.thejakartapost.com/rss/news.xml' },
+      { name: 'Rappler', url: 'https://www.rappler.com/feed/' },
+      { name: 'The Star (Malaysia)', url: 'https://www.thestar.com.my/rss/editors-pick' },
+      { name: 'Irrawaddy', url: 'https://www.irrawaddy.com/feed/' },
     ],
     energy: [
       { name: 'Oil & Gas', url: gn('(oil price OR OPEC OR "natural gas" OR pipeline OR LNG) when:2d') },

@@ -381,6 +381,18 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'RFE/RL Central Asia', url: rss('https://news.google.com/rss/search?q=site:rferl.org+Central+Asia+when:3d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'The Astana Times', url: rss('https://astanatimes.com/feed/') },
     { name: 'The Times of Central Asia', url: rss('https://timesca.com/feed/') },
+    // Taiwan (#5954)
+    { name: 'Focus Taiwan', url: rss('https://focustaiwan.tw/search/simple/all/1/rss') },
+    { name: 'Taipei Times', url: rss('https://www.taipeitimes.com/feeds/front.xml') },
+    { name: 'Taiwan News', url: rss('https://www.taiwannews.com.tw/rss') },
+    // Pakistan (#5954)
+    { name: 'Dawn', url: rss('https://www.dawn.com/feeds/home/') },
+    { name: 'Geo News', url: rss('https://news.google.com/rss/search?q=site:geo.tv+when:2d&hl=en-US&gl=US&ceid=US:en') },
+    // SE Asia security (#5954)
+    { name: 'Jakarta Post', url: rss('https://www.thejakartapost.com/rss/news.xml') },
+    { name: 'Rappler', url: rss('https://www.rappler.com/feed/') },
+    { name: 'The Star (Malaysia)', url: rss('https://www.thestar.com.my/rss/editors-pick') },
+    { name: 'Irrawaddy', url: rss('https://www.irrawaddy.com/feed/') },
   ],
   energy: [
     { name: 'Oil & Gas', url: rss('https://news.google.com/rss/search?q=(oil+price+OR+OPEC+OR+"natural+gas"+OR+pipeline+OR+LNG)+when:2d&hl=en-US&gl=US&ceid=US:en') },
@@ -1107,7 +1119,10 @@ export const DEFAULT_ENABLED_SOURCES: Record<string, string[]> = {
   middleeast: ['BBC Middle East', 'Al Jazeera', 'Al Arabiya', 'Guardian ME', 'BBC Persian', 'Iran International', 'IRNA', 'Mehr News', 'Haaretz', 'Jerusalem Post', 'Ynetnews', 'Asharq News', 'The National'],
   africa: ['BBC Africa', 'News24', 'Africanews', 'Jeune Afrique', 'Africa News', 'Premium Times', 'Channels TV', 'Sahel Crisis', 'Radio Tamazuj', 'Actualite.cd'],
   latam: ['BBC Latin America', 'Reuters LatAm', 'InSight Crime', 'Mexico News Daily', 'Clarín', 'Primicias', 'Infobae Americas', 'El Universo'],
-  asia: ['BBC Asia', 'The Diplomat', 'South China Morning Post', 'Reuters Asia', 'Nikkei Asia', 'CNA', 'Asia News', 'The Hindu', 'Eurasianet', 'The Astana Times'],
+asia: ['BBC Asia', 'The Diplomat', 'South China Morning Post', 'Reuters Asia', 'Nikkei Asia', 'CNA', 'Asia News', 'The Hindu',
+    'Eurasianet', 'The Astana Times',
+    'Focus Taiwan', 'Dawn', 'Rappler',
+  ],
   tech: ['Hacker News', 'Ars Technica', 'The Verge', 'MIT Tech Review'],
   ai: ['AI News', 'VentureBeat AI', 'The Verge AI', 'MIT Tech Review', 'ArXiv AI'],
   finance: ['CNBC', 'MarketWatch', 'Yahoo Finance', 'Financial Times', 'Reuters Business'],

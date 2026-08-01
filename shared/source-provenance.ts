@@ -109,8 +109,7 @@ export const SOURCE_TYPES: Record<string, SourceType> = {
   'This Week in Startups': 'tech', 'The Twenty Minute VC': 'tech',
   'Hard Fork (NYT)': 'tech', 'Pivot (Vox)': 'tech', 'Stratechery': 'tech',
   'Benedict Evans': 'tech', 'How I Built This': 'tech', 'Masters of Scale': 'tech',
-
-  // Periphery packs (#5953) — Caucasus
+// Periphery packs (#5953) — Caucasus
   'Civil.ge': 'mainstream', 'OC Media': 'mainstream', 'JAMnews': 'mainstream',
   'Azertag': 'wire', 'Armenpress': 'wire',
   // Periphery packs (#5953) — Belarus / Moldova
@@ -118,6 +117,10 @@ export const SOURCE_TYPES: Record<string, SourceType> = {
   // Periphery packs (#5953) — Central Asia
   'Eurasianet': 'mainstream', 'RFE/RL Central Asia': 'mainstream',
   'The Astana Times': 'mainstream', 'The Times of Central Asia': 'mainstream',
+  // Indo-Pacific feeds (#5954)
+  'Focus Taiwan': 'wire', 'Taipei Times': 'mainstream', 'Taiwan News': 'mainstream',
+  'Dawn': 'mainstream', 'Geo News': 'mainstream',
+  'Jakarta Post': 'mainstream', 'Rappler': 'mainstream', 'The Star (Malaysia)': 'mainstream', 'Irrawaddy': 'mainstream',
 };
 
 export function getSourceType(sourceName: string): SourceType {
