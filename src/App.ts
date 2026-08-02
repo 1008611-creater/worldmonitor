@@ -18,7 +18,11 @@ import {
   FREE_MAX_PANELS,
   FREE_MAX_SOURCES,
 } from '@/config';
-import { sanitizeLayersForVariant } from '@/config/map-layer-definitions';
+import {
+  sanitizeLayersForVariant,
+  sanitizeLockedLayers,
+  shouldSanitizeLockedLayers,
+} from '@/config/map-layer-definitions';
 import type { MapVariant } from '@/config/map-layer-definitions';
 import { getStoredMapModePreference } from '@/services/map-mode-preference';
 import {
@@ -32,7 +36,7 @@ import {
   stopFlightHistoryCleanup,
 } from '@/services';
 import { enableVesselRuntime, stopLoadedVesselHistoryCleanup } from '@/services/military-vessels-lazy';
-import { isProUser, loadWidgets } from '@/services/widget-store';
+import { isProUser, isProTierResolved, loadWidgets } from '@/services/widget-store';
 import { mlWorker } from '@/services/ml-worker';
 import { getAiFlowSettings, subscribeAiFlowChange, isHeadlineMemoryEnabled } from '@/services/ai-flow-settings';
 import { startLearning } from '@/services/country-instability';
@@ -321,13 +325,17 @@ export class App {
     }
 
     if (keySet.has(STORAGE_KEYS.mapLayers) && !this.state.initialUrlState?.layers) {
-      const nextLayers = normalizeExclusiveChoropleths(
+      let nextLayers = normalizeExclusiveChoropleths(
         sanitizeLayersForVariant(
           loadFromStorage<MapLayers>(STORAGE_KEYS.mapLayers, this.state.mapLayers),
           SITE_VARIANT as MapVariant,
         ),
         this.state.mapLayers,
       );
+      // #6045 — clear locked premium layers once free-tier is settled.
+      // Skip while entitlement is still resolving so Pro users don't lose
+      // resilienceScore during the Clerk/Convex boot window.
+      nextLayers = this.sanitizeMapLayersForTier(nextLayers);
       if (!CYBER_LAYER_ENABLED) nextLayers.cyberThreats = false;
       this.state.mapLayers = nextLayers;
       this.state.map?.setLayers(nextLayers);
@@ -762,6 +770,10 @@ export class App {
           currentVariant as MapVariant,
         ), null,
       );
+      // #6045 — heal stuck locked layers from pre-gate localStorage once free
+      // tier is settled. Do not run while Pro status is still resolving.
+      // Persist immediately so dirty storage doesn't reintroduce the layer.
+      mapLayers = this.sanitizeMapLayersForTier(mapLayers);
       panelSettings = loadFromStorage<Record<string, PanelConfig>>(
         STORAGE_KEYS.panels,
         DEFAULT_PANELS
@@ -955,6 +967,8 @@ export class App {
       mapLayers = normalizeExclusiveChoropleths(
         sanitizeLayersForVariant(initialUrlState.layers, currentVariant as MapVariant), null,
       );
+      // #6045 — URL layer deep-links also cannot force locked layers on for free users.
+      mapLayers = this.sanitizeMapLayersForTier(mapLayers);
       initialUrlState.layers = mapLayers;
     }
     if (!CYBER_LAYER_ENABLED) {
@@ -1181,6 +1195,7 @@ export class App {
       stopLayerActivity: (layer) => this.dataLoader.stopLayerActivity(layer),
       mountLiveNewsIfReady: () => this.panelLayout.mountLiveNewsIfReady(),
       updateFlightSource: (adsb, military) => this.updateFlightSourceIfReady(adsb, military),
+      isFreeTierFallbackActive: () => this.freeTierGate.authSettleDeadlineExceeded,
     });
 
     // Wire cross-module callback: DataLoader → SearchManager
@@ -1620,6 +1635,11 @@ export class App {
         // after sign-out, expiry, or downgrade.
         void this.dataLoader.clearGlobalTenders();
       }
+      // #6045 — when free-tier is settled, strip locked layers from map state
+      // (heals stuck checked+disabled checkbox from pre-gate CMD+K, and clears
+      // layers on Pro→free downgrade). The fallback deadline is an explicit
+      // settled-free signal when Clerk never resolves.
+      if (!nowPremium) this.healLockedMapLayers(this.freeTierGate.authSettleDeadlineExceeded);
       _prevHadPremium = nowPremium;
     };
     this.unsubEntitlementPremiumLoaders = onEntitlementChange(() => firePremiumLoaders());
@@ -1968,7 +1988,49 @@ export class App {
   private readonly freeTierGate = new FreeTierGate(() => {
     this.enforceFreeTierLimits();
     this.panelLayout.healStoredTabSnapshots();
+    // Clerk can remain pending forever when its script or key is unavailable.
+    // The gate's deadline is the explicit free-tier answer in that case, so
+    // heal stale locked map-layer state as well as panel/source state.
+    this.healLockedMapLayers(true);
   });
+
+  /**
+   * Sanitize a map-layer snapshot only after the entitlement answer is safe to
+   * treat as free. The fallback argument is deliberately explicit: pending
+   * auth is not evidence that a paying user is free, but the bounded gate is.
+   */
+  private sanitizeMapLayersForTier(
+    layers: MapLayers,
+    fallbackActive = this.freeTierGate.authSettleDeadlineExceeded,
+  ): MapLayers {
+    if (!shouldSanitizeLockedLayers(
+      hasPremiumAccess(),
+      isProTierResolved(),
+      fallbackActive,
+    )) return layers;
+
+    const healed = sanitizeLockedLayers(layers, false);
+    if (healed !== layers) saveToStorage(STORAGE_KEYS.mapLayers, healed);
+    return healed;
+  }
+
+  /** Heal the live map and persisted state after a downgrade or free fallback. */
+  private healLockedMapLayers(
+    fallbackActive = this.freeTierGate.authSettleDeadlineExceeded,
+  ): void {
+    const initialUrlLayers = this.state.initialUrlState?.layers;
+    if (initialUrlLayers) {
+      const healedUrlLayers = this.sanitizeMapLayersForTier(initialUrlLayers, fallbackActive);
+      if (healedUrlLayers !== initialUrlLayers && this.state.initialUrlState) {
+        this.state.initialUrlState.layers = healedUrlLayers;
+      }
+    }
+    const healed = this.sanitizeMapLayersForTier(this.state.mapLayers, fallbackActive);
+    if (healed === this.state.mapLayers) return;
+    this.state.mapLayers = healed;
+    this.state.map?.setLayers(healed);
+    this.dataLoader.syncDataFreshnessWithLayers();
+  }
 
   /**
    * Put back the custom widgets the free-tier gate hid, now that we know the
