@@ -102,6 +102,16 @@ An element that browser and RUM layout-shift attribution names because its *posi
 
 The element that *causes* a layout shift by changing its own footprint — growing, shrinking, materializing (insertion), or disappearing (removal). Movers are not reported by shift-attribution APIs; naming one requires diffing element geometry across the shift itself (a cached top/height baseline compared at shift delivery). The victim/mover distinction is load-bearing for all layout-stability work in this project: two shipped fixes aimed at victims had null field effect before mover instrumentation named the true mechanism. See also: Shift Victim, Deferred-Shell Contract.
 
+## Payments Provider Calls
+
+### Retry Ownership
+
+The invariant that exactly one layer owns retry policy for any external provider call — every other layer in the chain (vendor SDK internals, edge gateway, client transport) is either pinned to zero retries or restricted to failure classes the owning layer never retries. Vendor SDKs commonly ship default internal retries that honor a provider's advertised wait verbatim, so a retry layer added above an unpinned SDK silently multiplies raw request volume and turns the owner's attempt counts and wall-clock deadlines into fiction — the owning layer can only bound what it can see. Ownership is asserted by construction (retries pinned off when the client is built, each attempt individually time-bounded) and guarded by a contract test, never by convention. See also: Rate-Limit Outcome.
+
+### Rate-Limit Outcome
+
+The typed value a provider-rate-limited operation returns *instead of throwing*, so every downstream surface renders a deliberate retry state — an HTTP 429 with a retry hint at the service boundary, a structured error code on the public API — rather than collapsing the limit into a generic failure. The outcome only exists after the owning retry layer has exhausted its bounded attempts; a raw rate-limit error escaping before that point is a defect, not an outcome. See also: Retry Ownership.
+
 ## Test & Guard Verification
 
 ### Vacuous Guard
