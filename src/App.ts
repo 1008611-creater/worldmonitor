@@ -1325,14 +1325,29 @@ export class App {
       engine.registerAdapter(disasterAdapter);
       this.state.correlationEngine = engine;
 
-      await engine.run(this.state);
-      if (this.state.isDestroyed) return;
-      for (const domain of ['military', 'escalation', 'economic', 'disaster'] as const) {
-        const panel = this.state.panels[`${domain}-correlation`] as CorrelationPanel | undefined;
-        panel?.updateCards(engine.getCards(domain));
-      }
+      await this.runCorrelationEngine();
     } catch (error) {
       console.warn('[CorrelationEngine] Initial lazy load/run failed:', error);
+    }
+  }
+
+  private async runCorrelationEngine(): Promise<void> {
+    const engine = this.state.correlationEngine;
+    if (!engine || this.state.isDestroyed) return;
+
+    const { fetchCorrelationRuntimeMode } = await import('@/services/correlation-runtime-mode');
+    const runtimeMode = await fetchCorrelationRuntimeMode();
+    if (this.state.isDestroyed) return;
+
+    // run() reports false when it skipped because a run was already in flight.
+    // Not reachable today (run() never yields), but this diff put two awaits in
+    // front of it, so honour the contract rather than publishing getCards() —
+    // which on a first-run overlap would write empty cards into live panels.
+    const didRun = await engine.run(this.state, runtimeMode);
+    if (!didRun || this.state.isDestroyed) return;
+    for (const domain of ['military', 'escalation', 'economic', 'disaster'] as const) {
+      const panel = this.state.panels[`${domain}-correlation`] as CorrelationPanel | undefined;
+      panel?.updateCards(engine.getCards(domain));
     }
   }
 
@@ -2752,13 +2767,7 @@ export class App {
     this.refreshScheduler.scheduleRefresh(
       'correlation-engine',
       async () => {
-        const engine = this.state.correlationEngine;
-        if (!engine) return;
-        await engine.run(this.state);
-        for (const domain of ['military', 'escalation', 'economic', 'disaster'] as const) {
-          const panel = this.state.panels[`${domain}-correlation`] as CorrelationPanel | undefined;
-          panel?.updateCards(engine.getCards(domain));
-        }
+        await this.runCorrelationEngine();
       },
       REFRESH_INTERVALS.correlationEngine,
       () => this.shouldRefreshCorrelation(),
