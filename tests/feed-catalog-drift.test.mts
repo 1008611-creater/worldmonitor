@@ -15,14 +15,15 @@
  *
  * Loading note: src/config/feeds.ts pulls `rssProxyUrl` → `import.meta.env.DEV`,
  * and Node/tsx has no Vite env object, so we esbuild-bundle with defines — the
- * same pattern as tests/source-provenance.test.mts and tests/mission-presets.test.mts.
+ * shared harness lives in tests/_lib/bundle-feeds-module.mts.
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { bundleFeedsModule } from './_lib/bundle-feeds-module.mts';
 import { isAllowedDomain } from '../api/_rss-allowed-domain-match.js';
 import { computeCapDisabledSources, selectSourcesUnderCap } from '../src/services/source-cap';
 import {
@@ -31,13 +32,12 @@ import {
   migrateRegionalFeedRolloutDefaultsV5,
   migrateStrategicDefaultsV4,
 } from '../src/utils/cloud-prefs-migrations';
+import { THEATER_PRESETS } from '../src/config/theater-presets';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 const tempDir = join(repoRoot, 'tmp-feed-catalog-drift-test');
-const outfile = join(tempDir, 'feeds-bundle.mjs');
 const serverOutfile = join(tempDir, 'server-feeds-bundle.mjs');
-const rolloutOutfile = join(tempDir, 'regional-rollout-bundle.mjs');
 
 interface FeedEntry {
   name: string;
@@ -61,6 +61,7 @@ interface FeedsModule {
   getAllDefaultEnabledSources: () => Set<string>;
   getStrategicDefaultSources: () => Set<string>;
   getLocaleBoostedSources: (locale: string) => Set<string>;
+  getSourcePanelId: (sourceName: string) => string;
   computeDefaultDisabledSources: (locale?: string) => string[];
   computePreStrategicDefaultDisabledSources: (locale?: string) => string[];
   computeLegacyDefaultDisabledSources: () => string[];
@@ -241,46 +242,7 @@ let serverFeeds: ServerFeedsModule;
 let regionalRollout: RegionalRolloutModule;
 
 before(async () => {
-  mkdirSync(tempDir, { recursive: true });
-  // Stub the @/utils barrel so we don't drag proxy → i18n → import.meta.glob.
-  // feeds.ts only needs rssProxyUrl, and identity is fine for name registries.
-  const stubUtilsPlugin = {
-    name: 'stub-utils-barrel',
-    setup(buildApi: { onResolve: Function; onLoad: Function }) {
-      buildApi.onResolve({ filter: /^@\/utils$/ }, () => ({
-        path: 'stub-utils',
-        namespace: 'stub',
-      }));
-      buildApi.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({
-        contents: 'export function rssProxyUrl(url) { return url; }\n',
-        loader: 'js',
-      }));
-    },
-  };
-  const result = await build({
-    entryPoints: [join(repoRoot, 'src/config/feeds.ts')],
-    bundle: true,
-    format: 'esm',
-    platform: 'neutral',
-    target: 'es2022',
-    write: false,
-    absWorkingDir: repoRoot,
-    alias: { '@': join(repoRoot, 'src') },
-    plugins: [stubUtilsPlugin as never],
-    define: {
-      'import.meta.env': JSON.stringify({
-        DEV: false,
-        PROD: true,
-        SSR: false,
-        MODE: 'test',
-        BASE_URL: '/',
-        VITE_VARIANT: 'full',
-        VITE_RSS_DIRECT_TO_RELAY: 'false',
-      }),
-    },
-  });
-  writeFileSync(outfile, result.outputFiles[0].text, 'utf8');
-  feeds = await import(`${pathToFileURL(outfile).href}?t=${Date.now()}`) as FeedsModule;
+  feeds = await bundleFeedsModule<FeedsModule>({ repoRoot, tempDir });
 
   const serverResult = await build({
     entryPoints: [join(repoRoot, 'server/worldmonitor/news/v1/_feeds.ts')],
@@ -294,32 +256,12 @@ before(async () => {
   writeFileSync(serverOutfile, serverResult.outputFiles[0].text, 'utf8');
   serverFeeds = await import(`${pathToFileURL(serverOutfile).href}?t=${Date.now()}`) as ServerFeedsModule;
 
-  const rolloutResult = await build({
-    entryPoints: [join(repoRoot, 'src/services/regional-feed-rollout.ts')],
-    bundle: true,
-    format: 'esm',
-    platform: 'neutral',
-    target: 'es2022',
-    write: false,
-    absWorkingDir: repoRoot,
-    alias: { '@': join(repoRoot, 'src') },
-    plugins: [stubUtilsPlugin as never],
-    define: {
-      'import.meta.env': JSON.stringify({
-        DEV: false,
-        PROD: true,
-        SSR: false,
-        MODE: 'test',
-        BASE_URL: '/',
-        VITE_VARIANT: 'full',
-        VITE_RSS_DIRECT_TO_RELAY: 'false',
-      }),
-    },
+  regionalRollout = await bundleFeedsModule<RegionalRolloutModule>({
+    repoRoot,
+    tempDir,
+    outfileName: 'regional-rollout-bundle.mjs',
+    entryPoint: join(repoRoot, 'src/services/regional-feed-rollout.ts'),
   });
-  writeFileSync(rolloutOutfile, rolloutResult.outputFiles[0].text, 'utf8');
-  regionalRollout = await import(
-    `${pathToFileURL(rolloutOutfile).href}?t=${Date.now()}`
-  ) as RegionalRolloutModule;
 });
 
 after(() => {
@@ -565,6 +507,26 @@ describe('feed catalog drift', () => {
       assert.equal(feed?.url, expectedUrls[name], `server EN URL drifted for "${name}"`);
       assert.ok(!feed?.lang, `server entry for "${name}" must not set a non-en lang`);
     }
+  });
+
+  it('server full digest catalogs every theater preset source in its client panel (#5956)', () => {
+    const missing: string[] = [];
+    for (const preset of THEATER_PRESETS) {
+      for (const sourceName of preset.sourceNames) {
+        const category = feeds.getSourcePanelId(sourceName);
+        const serverCategory = serverFeeds.VARIANT_FEEDS.full?.[category] ?? [];
+        if (!serverCategory.some((feed) => feed.name === sourceName)) {
+          missing.push(`${preset.id}/${category}: ${sourceName}`);
+        }
+      }
+    }
+
+    assert.deepEqual(
+      missing,
+      [],
+      'every theater preset source must be served by the matching full-variant digest category: ' +
+        missing.join(', '),
+    );
   });
 
   it('does not default-enable Hungary/Greece locale packs for EN (#5949)', () => {
