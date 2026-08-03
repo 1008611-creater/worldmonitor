@@ -218,7 +218,7 @@ check verdict is:
 | Condition | Status |
 | --- | --- |
 | Every decision-critical country inside the 72-hour content budget | `OK` |
-| A decision-critical country past budget, future-dated, missing a usable timestamp, or absent from the run | `STALE_CONTENT` |
+| A decision-critical country past budget, future-dated, or absent from the run | `STALE_CONTENT` |
 | The block is absent, its counts are missing or arithmetically incoherent, or the producer's declared country set does not cover the set health pins | `COVERAGE_DEGRADED` |
 
 The verdict keys on the **decision-critical** countries — currently `CN` and
@@ -273,10 +273,35 @@ warning that is always lit and never actionable. The fleet-wide counts
 for visibility; only the critical subset moves the status.
 
 The 72-hour budget is deliberately the same one
-`china-corridor-source-adapters.ts` applies to a PortWatch observation. Health
-is inclusive at the boundary and treats a future-dated observation as stale,
-both one step more conservative than the data gate — an alarm should fire no
-later than the contract it protects.
+`china-corridor-source-adapters.ts` applies to a PortWatch observation, so this
+alarm explains the China activity-nowcast's `marked_stale` exclusion rather
+than contradicting it. Health is inclusive at the boundary and treats a
+future-dated observation as stale, both one step more conservative than the
+data gate — an alarm should fire no later than the contract it protects.
+
+The MCP freshness envelope over the same seed-meta key carries this dimension
+too. `get_chokepoint_status` declares the identical pinned scope, budget, and
+activation marker, so an MCP consumer cannot read `stale: false` for a key this
+endpoint calls `STALE_CONTENT`. Both surfaces re-age the observation at read
+time and share one assessor (`api/_content-freshness.js`), and the parity is
+asserted field-for-field against this config rather than left to a comment.
+Both also read the activation marker as an `EXISTS`, so its stored value can
+never make the two disagree.
+
+The surfaces differ in exactly one input class, deliberately. This endpoint
+cannot tell a marker it failed to read from one that is genuinely absent — both
+land in the same bucket — so a read error still grants the grace. MCP treats an
+unreadable marker as *unknown* and fails closed, because a grace granted on the
+absence of evidence never expires: an evicted or renamed marker would otherwise
+disable the alarm permanently. So for a pre-activation key whose marker read
+errors, this endpoint reports `OK` while MCP reports `stale: true`. The
+disagreement only ever runs in that direction — MCP over-alarming — and never
+the direction that hides stale content. Aligning this endpoint is tracked
+separately.
+
+An MCP caller still sees a single boolean: `stale` does not say *which*
+dimension failed, so `/api/health` remains the surface that names the stale
+country.
 
 Both sides age the same clock, and it is not the retrieval timestamp. They read
 `contentAsOfChangedAt`, which advances only when the upstream's own `max(date)`
