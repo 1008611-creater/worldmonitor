@@ -6,6 +6,7 @@ import { safeHtmlToString, type SafeHtml } from '@/utils/sanitize';
 import { trackPanelResized } from '@/services/analytics';
 import { getAiFlowSettings } from '@/services/ai-flow-settings';
 import { getSecretState } from '@/services/runtime-config';
+import { SELF_HOSTED_FREE_MODE } from '@/config/self-hosted';
 import { PanelGateReason } from '@/services/panel-gating';
 import { lockSvg, upgradeSvg } from '@/components/gate-icons';
 import { dataFreshness, type PanelFreshnessSummary } from '@/services/data-freshness';
@@ -181,7 +182,9 @@ export class Panel {
 
     const title = document.createElement('span');
     title.className = 'panel-title';
-    title.textContent = options.title;
+    const panelLocaleKey = this.panelId.replace(/-([a-z])/g, (_match: string, group: string) => group.toUpperCase());
+    const localizedTitle = t(`panels.${panelLocaleKey}`);
+    title.textContent = localizedTitle === `panels.${panelLocaleKey}` ? options.title : localizedTitle;
     headerLeft.appendChild(title);
 
     this.severityDotEl = document.createElement('span');
@@ -231,7 +234,7 @@ export class Panel {
       headerLeft.appendChild(this.newBadgeEl);
     }
 
-    if (options.premium && !getSecretState('WORLDMONITOR_API_KEY').present) {
+    if (options.premium && !SELF_HOSTED_FREE_MODE && !getSecretState('WORLDMONITOR_API_KEY').present) {
       const proBadge = h('span', { className: 'panel-pro-badge' }, t('premium.pro'));
       headerLeft.appendChild(proBadge);
     }

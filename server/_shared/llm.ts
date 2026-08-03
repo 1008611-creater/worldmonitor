@@ -129,6 +129,9 @@ export function getProviderCredentials(
     const apiUrl = process.env.LLM_API_URL;
     const apiKey = process.env.LLM_API_KEY;
     if (!apiUrl || !apiKey) return null;
+    const reasoningEffort = overrides.enableReasoning
+      ? process.env.LLM_REASONING_EFFORT?.trim()
+      : undefined;
     return {
       apiUrl,
       model: overrides.model || process.env.LLM_MODEL || 'gpt-3.5-turbo',
@@ -136,6 +139,7 @@ export function getProviderCredentials(
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      extraBody: reasoningEffort ? { reasoning_effort: reasoningEffort } : undefined,
     };
   }
 

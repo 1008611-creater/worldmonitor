@@ -817,7 +817,7 @@ export class EventHandlerManager implements AppModule {
     if (!mount) return;
 
     const active = loadStoredMissionPreset();
-    const label = active?.shortLabel ?? 'Mission';
+    const label = active?.shortLabel ?? t('footer.mission');
     const icon = active?.icon ?? '◎';
     const activeClass = active ? ' mission-preset-button--active' : '';
     const suggestedClass = !active && !isMissionPresetPromptDismissed() ? ' mission-preset-button--suggested' : '';
@@ -829,7 +829,7 @@ export class EventHandlerManager implements AppModule {
         type="button"
         aria-haspopup="dialog"
         aria-expanded="false"
-        title="${escapeHtml(active ? `Mission: ${active.label}` : 'Choose mission preset')}"
+        title="${escapeHtml(active ? `${t('footer.mission')}: ${active.label}` : t('footer.mission'))}"
       >
         <span class="mission-preset-button__icon">${escapeHtml(icon)}</span>
         <span class="mission-preset-button__label">${escapeHtml(label)}</span>
@@ -846,7 +846,7 @@ export class EventHandlerManager implements AppModule {
   private updateMobileMissionLabel(active: MissionPreset | null = loadStoredMissionPreset()): void {
     const item = document.getElementById('mobileMenuMission');
     const label = item?.querySelector('.mobile-menu-item-label');
-    if (label) label.textContent = active ? `Mission: ${active.shortLabel}` : 'Mission';
+    if (label) label.textContent = active ? `${t('footer.mission')}: ${active.shortLabel}` : t('footer.mission');
   }
 
   private toggleMissionPresetPopover(anchor: HTMLElement | null, mobile: boolean): void {
@@ -864,7 +864,7 @@ export class EventHandlerManager implements AppModule {
     const popover = document.createElement('div');
     popover.className = `mission-preset-popover${mobile ? ' mission-preset-popover--mobile' : ''}`;
     popover.setAttribute('role', 'dialog');
-    popover.setAttribute('aria-label', 'Mission presets');
+    popover.setAttribute('aria-label', t('footer.mission'));
     popover.tabIndex = -1;
 
     const cards = MISSION_PRESETS.map((preset) => {
@@ -889,12 +889,12 @@ export class EventHandlerManager implements AppModule {
     setTrustedHtml(popover, trustedHtml(`
       <div class="mission-preset-popover__header">
         <div>
-          <span>Mission</span>
-          <strong>${escapeHtml(active?.label ?? 'Choose Workspace')}</strong>
+          <span>${t('footer.mission')}</span>
+          <strong>${escapeHtml(active?.label ?? t('footer.mission'))}</strong>
         </div>
         <div class="mission-preset-popover__actions">
-          <button type="button" class="mission-preset-reset" data-mission-reset>Reset</button>
-          <button type="button" class="mission-preset-close" data-mission-close aria-label="Close mission presets">×</button>
+          <button type="button" class="mission-preset-reset" data-mission-reset>${t('components.watchlist.reset')}</button>
+          <button type="button" class="mission-preset-close" data-mission-close aria-label="${t('common.close')}">×</button>
         </div>
       </div>
       <div class="mission-preset-popover__list">${cards}</div>

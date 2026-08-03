@@ -76,7 +76,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: 'ai',
     label: 'AI & Summarization',
-    features: ['aiOllama', 'aiGroq', 'aiOpenRouter'],
+    features: ['aiGeneric', 'aiOllama', 'aiGroq', 'aiOpenRouter'],
   },
   {
     id: 'economy',

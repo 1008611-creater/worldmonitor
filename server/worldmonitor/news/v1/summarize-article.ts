@@ -154,6 +154,7 @@ export async function summarizeArticle(
 
   // Provider credential check
   const skipReasons: Record<string, string> = {
+    generic: 'LLM_API_URL/LLM_API_KEY not configured',
     ollama: 'OLLAMA_API_URL not configured',
     groq: 'GROQ_API_KEY not configured',
     openrouter: 'OPENROUTER_API_KEY not configured',

@@ -1,7 +1,7 @@
 /**
  * Summarization Service with Fallback Chain
  * Server-side Redis caching handles cross-user deduplication
- * Fallback: Ollama -> Groq -> OpenRouter -> Browser T5
+ * Fallback: ASXS/OpenAI-compatible -> Ollama -> Groq -> OpenRouter -> Browser T5
  *
  * Uses NewsServiceClient.summarizeArticle() RPC instead of legacy
  * per-provider fetch endpoints.
@@ -113,6 +113,7 @@ interface ApiProviderDef {
 // (DeepSeek V4 Flash) ahead of Groq — the RPC honors the client-supplied
 // provider, so the client's try-order decides which model summarizes.
 const API_PROVIDERS: ApiProviderDef[] = [
+  { featureId: 'aiGeneric',   provider: 'generic',   label: 'OpenAI-compatible AI' },
   { featureId: 'aiOllama',      provider: 'ollama',     label: 'Ollama' },
   { featureId: 'aiOpenRouter',  provider: 'openrouter', label: 'OpenRouter' },
   { featureId: 'aiGroq',        provider: 'groq',       label: 'Groq AI' },
@@ -272,7 +273,7 @@ async function runApiChain(
 }
 
 /**
- * Generate a summary using the fallback chain: Ollama -> Groq -> OpenRouter -> Browser T5
+ * Generate a summary using the fallback chain: generic -> Ollama -> Groq -> OpenRouter -> Browser T5
  * Server-side Redis caching is handled by the SummarizeArticle RPC handler.
  *
  * @param geoContext Optional geographic signal context to include in the prompt
@@ -349,8 +350,9 @@ async function generateSummaryInternal(
         onProgress?.(1, totalSteps, 'Running local AI model (beta)...');
         const browserResult = await tryBrowserT5(attemptState, headlines, 'summarization-beta', bodies);
         if (browserResult) {
-          const groqProvider = API_PROVIDERS.find(p => p.provider === 'groq');
-          if (groqProvider && !options?.skipCloudProviders) tryApiProvider(groqProvider, attemptState, headlines, geoContext, undefined, bodies).catch(() => {});
+          const warmProvider = API_PROVIDERS.find(p => p.provider === 'generic')
+            ?? API_PROVIDERS.find(p => p.provider === 'groq');
+          if (warmProvider && !options?.skipCloudProviders) tryApiProvider(warmProvider, attemptState, headlines, geoContext, undefined, bodies).catch(() => {});
 
           return browserResult;
         }

@@ -14,6 +14,7 @@ import {
 } from '@/services/market-watchlist';
 import { WatchlistEditor } from './WatchlistEditor';
 import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+import { t } from '@/services/i18n';
 
 
 let activeOverlay: HTMLElement | null = null;
@@ -43,21 +44,18 @@ export function openWatchlistModal(): void {
 
   setTrustedHtml(modal, trustedHtml(`
     <div class="modal-header">
-      <span class="modal-title">Market watchlist</span>
-      <button class="modal-close" aria-label="Close">×</button>
+    <span class="modal-title">${t('components.watchlist.title')}</span>
+      <button class="modal-close" aria-label="${t('components.watchlist.close')}">×</button>
     </div>
     <div style="padding:14px 16px 16px 16px">
       <div style="color:var(--text-dim);font-size:12px;line-height:1.5;margin-bottom:12px">
-        Search a ticker or company name and pick from the list — every entry is a
-        real, tracked symbol. Your picks are <strong>added</strong> to the Markets
-        panel and lead the Premium Stock Analysis, Backtesting and Daily Market
-        Brief panels. PRO members get every ticker in the list reported (up to 50).
+        ${t('components.watchlist.description')}
       </div>
       <div id="wmWatchlistEditorMount"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" class="panels-reset-layout" id="wmMarketResetBtn">Reset</button>
-        <button type="button" class="panels-reset-layout" id="wmMarketCancelBtn">Cancel</button>
-        <button type="button" class="panels-reset-layout" id="wmMarketSaveBtn" style="border-color:var(--text-dim);color:var(--text)">Save</button>
+        <button type="button" class="panels-reset-layout" id="wmMarketResetBtn">${t('components.watchlist.reset')}</button>
+        <button type="button" class="panels-reset-layout" id="wmMarketCancelBtn">${t('components.watchlist.cancel')}</button>
+        <button type="button" class="panels-reset-layout" id="wmMarketSaveBtn" style="border-color:var(--text-dim);color:var(--text)">${t('components.watchlist.save')}</button>
       </div>
     </div>
   `, "legacy direct innerHTML migration"));
@@ -110,10 +108,10 @@ export function openWatchlistModal(): void {
  * existing `live-news-settings-btn` styling so it matches the other panel
  * header affordances.
  */
-export function createWatchlistButton(label = 'Watchlist'): HTMLButtonElement {
+export function createWatchlistButton(label = t('components.watchlist.button')): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'live-news-settings-btn';
-  btn.title = 'Customize market watchlist';
+  btn.title = t('components.watchlist.customize');
   btn.textContent = label;
   btn.addEventListener('click', (e) => {
     e.stopPropagation();

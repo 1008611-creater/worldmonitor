@@ -17,6 +17,7 @@ import {
 } from '@/services/pro-banner-policy';
 import { t } from '@/services/i18n';
 import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+import { SELF_HOSTED_FREE_MODE } from '@/config/self-hosted';
 
 
 let bannerEl: HTMLElement | null = null;
@@ -213,6 +214,11 @@ export function showProBanner(container: HTMLElement): void {
   // regardless of premium state, so caching here covers both "initially
   // free" and "initially premium then downgrade" trajectories.
   bannerContainer = container;
+
+  if (SELF_HOSTED_FREE_MODE) {
+    hideProBanner();
+    return;
+  }
 
   if (bannerEl && !bannerEl.isConnected) {
     bannerEl = null;

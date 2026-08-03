@@ -6,6 +6,7 @@ import { isDesktopRuntime } from '@/services/runtime';
 import { getSecretState } from '@/services/runtime-config';
 // boundary-ignore: isEntitled is a pure state check with no side effects
 import { isEntitled } from '@/services/entitlements';
+import { SELF_HOSTED_FREE_MODE } from './self-hosted';
 
 const _desktop = isDesktopRuntime();
 
@@ -439,6 +440,7 @@ const FINANCE_PANELS: Record<string, PanelConfig> = {
   'live-webcams': { name: 'Live Webcams', enabled: true, priority: 2 },
   'windy-webcams': { name: 'Windy Live Webcam', enabled: false, priority: 2 },
   insights: { name: 'AI Market Insights', enabled: true, priority: 1 },
+  'market-implications': { name: 'AI Market Implications', enabled: true, priority: 1, premium: 'locked' as const },
   markets: { name: 'Live Markets', enabled: true, priority: 1 },
   'stock-analysis': { name: 'Premium Stock Analysis', enabled: true, priority: 1, premium: 'locked' },
   'stock-backtest': { name: 'Premium Backtesting', enabled: true, priority: 1, premium: 'locked' },
@@ -1235,6 +1237,7 @@ export function restoreFreeMapPanelAccess(
  * Mirrors the entitlement checks in panel-layout.ts (single source of truth).
  */
 export function isPanelEntitled(key: string, config: PanelConfig, isPro = false): boolean {
+  if (SELF_HOSTED_FREE_MODE) return true;
   if (!config.premium) return true;
   // Dodo entitlements unlock all premium panels
   if (isEntitled()) return true;
@@ -1270,6 +1273,7 @@ export function enforceFreePanelLimit(
   panelSettings: Record<string, PanelConfig>,
   isPro: boolean,
 ): Record<string, PanelConfig> {
+  if (SELF_HOSTED_FREE_MODE) return restoreProGatedPanels(panelSettings);
   if (isPro) return restoreProGatedPanels(panelSettings);
 
   const next: Record<string, PanelConfig> = {};
@@ -1565,6 +1569,7 @@ export function getProPanelKeys(
   panelSettings: Record<string, PanelConfig>,
   variant: string,
 ): string[] {
+  if (SELF_HOSTED_FREE_MODE) return [];
   return Object.keys(panelSettings).filter((key) =>
     panelSettings[key]?.enabled && Boolean(getEffectivePanelConfig(key, variant).premium),
   );

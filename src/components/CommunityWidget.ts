@@ -14,7 +14,7 @@ export function mountCommunityWidget(): void {
   widget.className = 'community-widget';
   setTrustedHtml(widget, trustedHtml(`
     <div class="cw-pill">
-      <a class="cw-cta" href="${DISCUSSION_URL}" target="_blank" rel="noopener">Join the Discord Community</a>
+      <a class="cw-cta" href="${DISCUSSION_URL}" target="_blank" rel="noopener">${t('footer.community')}</a>
       <button class="cw-close" aria-label="${t('common.close')}">&times;</button>
     </div>
   `, "legacy direct innerHTML migration"));

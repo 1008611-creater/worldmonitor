@@ -80,8 +80,8 @@ export class StockAnalysisPanel extends Panel {
   private lastHistory: StockAnalysisHistory = {};
 
   constructor() {
-    super({ id: 'stock-analysis', title: 'Premium Stock Analysis', infoTooltip: t('components.stockAnalysis.infoTooltip'), premium: 'locked' });
-    this.header.appendChild(createWatchlistButton('Edit Watchlist'));
+    super({ id: 'stock-analysis', title: t('panels.stockAnalysis'), infoTooltip: t('components.stockAnalysis.infoTooltip'), premium: 'locked' });
+    this.header.appendChild(createWatchlistButton(t('components.stockAnalysis.editWatchlist')));
   }
 
   public setInsiderData(symbol: string, data: InsiderTransactionsResult): void {

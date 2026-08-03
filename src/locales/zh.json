@@ -182,6 +182,7 @@
   "header": {
     "world": "世界",
     "tech": "科技",
+    "happy": "正能量",
     "live": "实时",
     "search": "搜索",
     "settings": "设置",
@@ -334,8 +335,35 @@
     "gulfCurrencies": "海湾货币",
     "gulfOil": "海湾石油",
     "bigmac": "Real Big Mac Index",
-    "fearGreed": "Fear & Greed",
     "marketImplications": "AI 市场影响",
+    "stockAnalysis": "股票分析",
+    "stockBacktest": "股票回测",
+    "dailyMarketBrief": "每日市场简报",
+    "marketsNews": "市场新闻",
+    "forex": "外汇与货币",
+    "bonds": "固定收益",
+    "commoditiesNews": "大宗商品新闻",
+    "cryptoDigitalAssets": "加密与数字资产",
+    "cryptoNews": "加密新闻",
+    "cryptoHeatmap": "加密板块",
+    "defiTokens": "DeFi 代币",
+    "aiTokens": "AI 代币",
+    "otherTokens": "其他代币",
+    "centralbanks": "央行观察",
+    "macroStress": "宏观压力",
+    "globalProcurement": "全球采购",
+    "sanctionsPressure": "制裁压力",
+    "economicNews": "经济新闻",
+    "ipoEarningsMna": "IPO、财报与并购",
+    "marketRegime": "市场环境",
+    "macroTiles": "宏观指标",
+    "fearGreed": "恐惧与贪婪",
+    "aaiiSentiment": "AAII 投资者情绪",
+    "financialStress": "金融压力",
+    "fsi": "金融压力",
+    "yieldCurve": "收益率曲线",
+    "earningsCalendar": "财报日历",
+    "economicCalendar": "经济日历",
     "energyComplex": "能源综合体",
     "oilInventories": "石油库存",
     "energyCrisis": "能源危机追踪器",
@@ -366,6 +394,25 @@
     "consumerPrices": "消费者价格",
     "marketBreadth": "市场广度",
     "climateNews": "气候新闻"
+  },
+  "footer": {
+    "countries": "国家",
+    "chokepoints": "咽喉要道",
+    "crises": "危机",
+    "tools": "工具",
+    "mission": "任务中心",
+    "lightMode": "浅色模式",
+    "darkMode": "深色模式",
+    "pricing": "价格方案",
+    "blog": "博客",
+    "docs": "文档",
+    "status": "服务状态",
+    "more": "更多"
+    ,"today": "今日",
+    "map": "地图",
+    "search": "搜索",
+    "alerts": "提醒",
+    "community": "加入 Discord 社区"
   },
   "commands": {
     "prefixes": {
@@ -1890,16 +1937,28 @@
       "infoTooltip": "<strong>Alt Tokens</strong> Prices and 24h/7d performance for alternative and emerging crypto tokens outside the major-cap tiers."
     },
     "stockAnalysis": {
-      "infoTooltip": "<strong>Premium Stock Analysis</strong> AI-powered analysis for stocks in your watchlist — buy/hold/sell signals, price targets, key risks, and catalysts updated daily."
+      "infoTooltip": "<strong>股票分析</strong> 基于 AI 分析您的观察列表股票，提供买入/持有/卖出信号、目标价、主要风险和催化因素。",
+      "editWatchlist": "编辑观察列表"
     },
     "stockBacktest": {
-      "infoTooltip": "<strong>Premium Backtesting</strong> Historical performance backtests for stocks in your watchlist — past returns, max drawdown, and volatility metrics."
+      "infoTooltip": "<strong>股票回测</strong> 对观察列表股票进行历史表现回测，提供过往收益、最大回撤和波动率指标。",
+      "editWatchlist": "编辑观察列表"
     },
     "dailyMarketBrief": {
       "infoTooltip": "<strong>Daily Market Brief</strong> AI-generated daily summary of global market conditions, key macro trends, and sector-level signals — refreshes each trading day."
     },
     "centralBankWatch": {
       "infoTooltip": "<strong>Central Bank Watch</strong> Latest statements, rate decisions, and communications from the Federal Reserve, ECB, Bank of England, and other major central banks worldwide."
+    },
+    "watchlist": {
+      "title": "市场观察列表",
+      "close": "关闭",
+      "description": "搜索股票代码或公司名称，并从已跟踪的标的中选择。所选股票会加入市场面板，并用于股票分析、回测和每日简报。",
+      "reset": "重置",
+      "cancel": "取消",
+      "save": "保存",
+      "button": "观察列表",
+      "customize": "自定义市场观察列表"
     },
     "airlineIntel": {
       "infoTooltip": "<strong>航空情报</strong> 实时航空公司运营数据：航线暂停、空域关闭、承运商公告和紧急改航。来源：航空当局NOTAM和承运商通报。",
@@ -3169,6 +3228,7 @@
     "cached": "已缓存",
     "unavailable": "不可用",
     "close": "关闭",
+    "skipToMain": "跳转到主要内容",
     "currentVariant": "(当前)",
     "retry": "Retry",
     "refresh": "Refresh",

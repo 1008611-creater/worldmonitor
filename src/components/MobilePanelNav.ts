@@ -6,6 +6,20 @@ import type { PanelConfig } from '@/types';
 // Synthetic chip key — must not collide with PANEL_CATEGORY_MAP keys.
 const PRO_CATEGORY = '__pro__';
 
+// Finance users open the mobile dashboard to answer a market question first.
+// Keep the existing category declarations as the source of truth, but place
+// the high-frequency research paths before supporting macro/news sections.
+const FINANCE_CATEGORY_ORDER = [
+  'finMarkets',
+  'core',
+  'fixedIncomeFx',
+  'finCommodities',
+  'centralBanksEcon',
+  'cryptoDigital',
+  'dealsInstitutional',
+  'gulfMena',
+] as const;
+
 /**
  * Mobile-only sticky category chip bar mounted above the panels grid.
  * Turns the single-column panel scroll into navigable sections: tapping a
@@ -51,6 +65,15 @@ export class MobilePanelNav {
   public refresh(): void {
     const settings = this.getPanelSettings();
     this.proPanelKeys = new Set(getProPanelKeys(settings, SITE_VARIANT));
+    const variantCategories = getVariantPanelCategories(settings, SITE_VARIANT);
+    const orderedVariantCategories = SITE_VARIANT === 'finance'
+      ? [...variantCategories].sort((a, b) => {
+        const aIndex = FINANCE_CATEGORY_ORDER.indexOf(a.key as typeof FINANCE_CATEGORY_ORDER[number]);
+        const bIndex = FINANCE_CATEGORY_ORDER.indexOf(b.key as typeof FINANCE_CATEGORY_ORDER[number]);
+        return (aIndex === -1 ? FINANCE_CATEGORY_ORDER.length : aIndex)
+          - (bIndex === -1 ? FINANCE_CATEGORY_ORDER.length : bIndex);
+      })
+      : variantCategories;
     const categories = [
       { key: 'all', label: t('header.sourceRegionAll') },
       // PRO right after All: one tap surfaces the whole premium suite —
@@ -58,7 +81,7 @@ export class MobilePanelNav {
       ...(this.proPanelKeys.size > 0
         ? [{ key: PRO_CATEGORY, label: `⚡ ${t('widgets.proBadge')}` }]
         : []),
-      ...getVariantPanelCategories(settings, SITE_VARIANT)
+      ...orderedVariantCategories
         .map(({ key, labelKey }) => ({ key, label: t(labelKey) })),
     ];
     if (!categories.some((c) => c.key === this.activeCategory)) {

@@ -5406,7 +5406,7 @@ export class DeckGLMap {
     const slider = document.createElement('div');
     slider.className = 'time-slider deckgl-time-slider';
     setTrustedHtml(slider, trustedHtml(`
-      <div class="time-options">
+      <div class="time-options" aria-label="${t('components.deckgl.timeRange')}">
         <button class="time-btn ${this.state.timeRange === '1h' ? 'active' : ''}" data-range="1h">1h</button>
         <button class="time-btn ${this.state.timeRange === '6h' ? 'active' : ''}" data-range="6h">6h</button>
         <button class="time-btn ${this.state.timeRange === '24h' ? 'active' : ''}" data-range="24h">24h</button>

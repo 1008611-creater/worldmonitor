@@ -251,6 +251,7 @@
   "header": {
     "world": "WORLD",
     "tech": "TECH",
+    "happy": "GOOD NEWS",
     "live": "LIVE",
     "cached": "CACHED",
     "unavailable": "UNAVAILABLE",
@@ -332,6 +333,33 @@
     "liveNews": "Live News",
     "markets": "Markets",
     "marketImplications": "AI Market Implications",
+    "stockAnalysis": "Stock Analysis",
+    "stockBacktest": "Stock Backtesting",
+    "dailyMarketBrief": "Daily Market Brief",
+    "marketsNews": "Markets News",
+    "forex": "Forex & Currencies",
+    "bonds": "Fixed Income",
+    "commoditiesNews": "Commodities News",
+    "cryptoDigitalAssets": "Crypto & Digital Assets",
+    "cryptoNews": "Crypto News",
+    "cryptoHeatmap": "Crypto Sectors",
+    "defiTokens": "DeFi Tokens",
+    "aiTokens": "AI Tokens",
+    "otherTokens": "Alt Tokens",
+    "centralbanks": "Central Bank Watch",
+    "macroStress": "Macro Stress",
+    "globalProcurement": "Global Procurement",
+    "sanctionsPressure": "Sanctions Pressure",
+    "economicNews": "Economic News",
+    "ipoEarningsMna": "IPOs, Earnings & M&A",
+    "marketRegime": "Market Regime",
+    "macroTiles": "Macro Indicators",
+    "aaiiSentiment": "AAII Sentiment",
+    "financialStress": "Financial Stress",
+    "fsi": "Financial Stress",
+    "yieldCurve": "Yield Curve",
+    "earningsCalendar": "Earnings Calendar",
+    "economicCalendar": "Economic Calendar",
     "map": "Global Situation",
     "techMap": "Global Tech",
     "techHubs": "Hot Tech Hubs",
@@ -435,6 +463,25 @@
     "fearGreed": "Fear & Greed",
     "marketBreadth": "Market Breadth",
     "climateNews": "Climate News"
+  },
+  "footer": {
+    "countries": "Countries",
+    "chokepoints": "Chokepoints",
+    "crises": "Crises",
+    "tools": "Tools",
+    "mission": "Mission",
+    "lightMode": "Light Mode",
+    "darkMode": "Dark Mode",
+    "pricing": "Pricing",
+    "blog": "Blog",
+    "docs": "Docs",
+    "status": "Status",
+    "more": "More"
+    ,"today": "Today",
+    "map": "Map",
+    "search": "Search",
+    "alerts": "Alerts",
+    "community": "Join the Discord Community"
   },
   "commands": {
     "prefixes": {
@@ -1950,16 +1997,28 @@
       "infoTooltip": "<strong>Alt Tokens</strong> Prices and 24h/7d performance for alternative and emerging crypto tokens outside the major-cap tiers."
     },
     "stockAnalysis": {
-      "infoTooltip": "<strong>Premium Stock Analysis</strong> AI-powered analysis for stocks in your watchlist — buy/hold/sell signals, price targets, key risks, and catalysts updated daily."
+      "infoTooltip": "<strong>Stock Analysis</strong> AI-powered analysis for stocks in your watchlist — buy/hold/sell signals, price targets, key risks, and catalysts updated daily.",
+      "editWatchlist": "Edit Watchlist"
     },
     "stockBacktest": {
-      "infoTooltip": "<strong>Premium Backtesting</strong> Historical performance backtests for stocks in your watchlist — past returns, max drawdown, and volatility metrics."
+      "infoTooltip": "<strong>Stock Backtesting</strong> Historical performance backtests for stocks in your watchlist — past returns, max drawdown, and volatility metrics.",
+      "editWatchlist": "Edit Watchlist"
     },
     "dailyMarketBrief": {
       "infoTooltip": "<strong>Daily Market Brief</strong> AI-generated daily summary of global market conditions, key macro trends, and sector-level signals — refreshes each trading day."
     },
     "centralBankWatch": {
       "infoTooltip": "<strong>Central Bank Watch</strong> Latest statements, rate decisions, and communications from the Federal Reserve, ECB, Bank of England, and other major central banks worldwide."
+    },
+    "watchlist": {
+      "title": "Market Watchlist",
+      "close": "Close",
+      "description": "Search for a ticker or company and choose a tracked symbol. Your picks are added to Markets and used by stock analysis, backtesting, and the daily brief.",
+      "reset": "Reset",
+      "cancel": "Cancel",
+      "save": "Save",
+      "button": "Watchlist",
+      "customize": "Customize market watchlist"
     },
     "gulfEconomies": {
       "infoTooltip": "<strong>Gulf Economies</strong> Real-time Gulf stock indices, currency rates, and oil prices for GCC economies (Saudi Arabia, UAE, Kuwait, Qatar, Bahrain, Oman)."
@@ -3264,6 +3323,7 @@
     "cached": "CACHED",
     "unavailable": "UNAVAILABLE",
     "close": "Close",
+    "skipToMain": "Skip to main content",
     "cancel": "Cancel",
     "currentVariant": "(current)",
     "retry": "Retry",

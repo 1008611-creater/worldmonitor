@@ -31,6 +31,7 @@ export type RuntimeSecretKey =
   | 'ICAO_API_KEY';
 
 export type RuntimeFeatureId =
+  | 'aiGeneric'
   | 'aiGroq'
   | 'aiOpenRouter'
   | 'stockNewsSearchExa'
@@ -81,6 +82,7 @@ export interface RuntimeConfig {
 const TOGGLES_STORAGE_KEY = 'worldmonitor-runtime-feature-toggles';
 
 const defaultToggles: Record<RuntimeFeatureId, boolean> = {
+  aiGeneric: true,
   aiGroq: true,
   aiOpenRouter: true,
   stockNewsSearchExa: true,
@@ -109,6 +111,13 @@ const defaultToggles: Record<RuntimeFeatureId, boolean> = {
 };
 
 export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
+  {
+    id: 'aiGeneric',
+    name: 'OpenAI-compatible AI upstream',
+    description: 'Custom OpenAI-compatible provider such as ASXS for summaries and analysis.',
+    requiredSecrets: [],
+    fallback: 'Falls back to the browser model when the custom upstream is unavailable.',
+  },
   {
     id: 'aiOllama',
     name: 'Ollama local summarization',

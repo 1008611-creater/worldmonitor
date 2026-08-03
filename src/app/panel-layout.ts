@@ -72,6 +72,7 @@ import type { McpPanelSpec } from '@/services/mcp-store';
 import { getAuthState, subscribeAuthState } from '@/services/auth-state';
 import type { AuthSession } from '@/services/auth-state';
 import { PanelGateReason, getPanelGateReason, hasPremiumAccess, resolveBillingAwareGateReason, resolveGateAction } from '@/services/panel-gating';
+import { SELF_HOSTED_FREE_MODE } from '@/config/self-hosted';
 import { evaluateTabCap, exportLockToGateReason } from '@/services/gates/export';
 import { primeExportGateActivation } from '@/services/gates/export-resolver';
 import type { TabCapVerdict } from '@/services/gates/export-resolver';
@@ -174,6 +175,28 @@ const DASHBOARD_REFERENCE_LINKS = [
   { label: 'Chokepoints', path: '/chokepoints/' },
   { label: 'Crises', path: '/crises/' },
   { label: 'Tools', path: '/tools/' },
+] as const;
+
+// Mobile Finance follows the user's typical research sequence: live market
+// state, watchlist research, AI interpretation, then broader news/context.
+// Finance mobile keeps this product order even when an older workspace has a
+// saved order; desktop and non-Finance workspaces retain their saved order.
+const FINANCE_MOBILE_PANEL_ORDER = [
+  'markets',
+  'heatmap',
+  'macro-signals',
+  'market-breadth',
+  'stock-analysis',
+  'stock-backtest',
+  'daily-market-brief',
+  'market-implications',
+  'insights',
+  'markets-news',
+  'live-news',
+  'forex',
+  'bonds',
+  'commodities',
+  'energy-complex',
 ] as const;
 
 // TEMPORARY MIRROR of each panel constructor's footprint (`defaultRowSpan` /
@@ -828,16 +851,22 @@ export class PanelLayoutManager implements AppModule {
     // (which shoved #panelsGrid up 698px, field CLS ~0.62 for this cohort).
     const mapStartsCollapsed = this.ctx.isMobile && PanelLayoutManager.isMobileMapCollapsedPreferred();
     const bootShellFootprint = import.meta.env.DEV ? captureBootShellFootprint(this.ctx.container) : null;
+    const referenceLinkLabels: Record<typeof DASHBOARD_REFERENCE_LINKS[number]['label'], string> = {
+      Countries: t('footer.countries'),
+      Chokepoints: t('footer.chokepoints'),
+      Crises: t('footer.crises'),
+      Tools: t('footer.tools'),
+    };
     const referenceLinksHtml = DASHBOARD_REFERENCE_LINKS.map(({ label, path }) => {
       const href = this.ctx.isDesktopApp ? `https://www.worldmonitor.app${path}` : path;
-      return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+      return `<a href="${href}" target="_blank" rel="noopener">${referenceLinkLabels[label]}</a>`;
     }).join('');
 
     markLcpDebug('wm:layout:render-start');
     document.documentElement.classList.add('wm-layout-hydrated');
     setTrustedHtml(this.ctx.container, trustedHtml(`
       ${this.ctx.isDesktopApp ? '<div class="tauri-titlebar" data-tauri-drag-region></div>' : ''}
-      <a href="#main" class="skip-link">Skip to main content</a>
+      <a href="#main" class="skip-link">${t('common.skipToMain')}</a>
       <div id="proBannerSlot" class="pro-banner-slot" aria-live="polite"></div>
       <div class="header">
         <div class="header-left">
@@ -896,9 +925,9 @@ export class PanelLayoutManager implements AppModule {
                class="variant-option ${SITE_VARIANT === 'happy' ? 'active' : ''}"
                data-variant="happy"
                ${vTarget('happy')}
-               title="Good News${SITE_VARIANT === 'happy' ? ` ${t('common.currentVariant')}` : ''}">
+               title="${t('header.happy')}${SITE_VARIANT === 'happy' ? ` ${t('common.currentVariant')}` : ''}">
               <span class="variant-icon">☀️</span>
-              <span class="variant-label">Good News</span>
+              <span class="variant-label">${t('header.happy')}</span>
             </a>`;
       })()}</div>
           <span class="logo">MONITOR</span><span class="logo-mobile">World Monitor</span><span class="version">v${__APP_VERSION__}</span>${BETA_MODE ? '<span class="beta-badge">BETA</span>' : ''}
@@ -947,15 +976,15 @@ export class PanelLayoutManager implements AppModule {
       <nav class="mobile-menu" id="mobileMenu">
         <div class="mobile-menu-header">
           <span class="mobile-menu-title">WORLD MONITOR</span>
-          <button class="mobile-menu-close" id="mobileMenuClose" aria-label="Close menu">
+          <button class="mobile-menu-close" id="mobileMenuClose" aria-label="${t('common.close')} menu">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <div class="mobile-menu-divider"></div>
-        <div class="mobile-menu-account" aria-label="Account">
+        <div class="mobile-menu-account" aria-label="${t('auth.signIn')}">
           <span class="mobile-menu-account-icon" aria-hidden="true">◯</span>
           <div id="mobileAuthWidgetMount"></div>
-          <button class="mobile-auth-fallback" id="mobileAuthFallback" type="button">Sign In</button>
+          <button class="mobile-auth-fallback" id="mobileAuthFallback" type="button">${t('auth.signIn')}</button>
         </div>
         <div class="mobile-menu-divider"></div>
         ${(() => {
@@ -965,7 +994,7 @@ export class PanelLayoutManager implements AppModule {
           { key: 'finance', icon: '📈', label: t('header.finance') },
           { key: 'commodity', icon: '⛏️', label: t('header.commodity') },
           { key: 'energy', icon: '⚡', label: t('header.energy') },
-          { key: 'happy', icon: '☀️', label: 'Good News' },
+          { key: 'happy', icon: '☀️', label: t('header.happy') },
         ];
         return variants.map(v =>
           `<button class="mobile-menu-item mobile-menu-variant ${v.key === SITE_VARIANT ? 'active' : ''}" data-variant="${v.key}">
@@ -983,7 +1012,7 @@ export class PanelLayoutManager implements AppModule {
         </button>
         <button class="mobile-menu-item" id="mobileMenuMission">
           <span class="mobile-menu-item-icon">◎</span>
-          <span class="mobile-menu-item-label">Mission</span>
+          <span class="mobile-menu-item-label">${t('footer.mission')}</span>
           <span class="mobile-menu-chevron">▸</span>
         </button>
         <div class="mobile-menu-divider"></div>
@@ -993,7 +1022,7 @@ export class PanelLayoutManager implements AppModule {
         </button>
         <button class="mobile-menu-item" id="mobileMenuTheme">
           <span class="mobile-menu-item-icon">${getCurrentTheme() === 'dark' ? '☀️' : '🌙'}</span>
-          <span class="mobile-menu-item-label">${getCurrentTheme() === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+          <span class="mobile-menu-item-label">${getCurrentTheme() === 'dark' ? t('footer.lightMode') : t('footer.darkMode')}</span>
         </button>
         <a class="mobile-menu-item" href="https://x.com/eliehabib" target="_blank" rel="noopener">
           <span class="mobile-menu-item-icon"><svg class="x-logo" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></span>
@@ -1002,10 +1031,10 @@ export class PanelLayoutManager implements AppModule {
         <div class="mobile-menu-divider"></div>
         <div class="mobile-menu-footer-links">
           ${referenceLinksHtml}
-          <a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">Pricing</a>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">Blog</a>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">Docs</a>
-          <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">Status</a>
+          ${SELF_HOSTED_FREE_MODE ? '' : `<a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">${t('footer.pricing')}</a>`}
+          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">${t('footer.blog')}</a>
+          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">${t('footer.docs')}</a>
+          <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">${t('footer.status')}</a>
         </div>
         <div class="mobile-menu-version">v${__APP_VERSION__}</div>
       </nav>
@@ -1034,7 +1063,7 @@ export class PanelLayoutManager implements AppModule {
         <div class="map-section${mapStartsCollapsed ? ' collapsed' : ''}" id="mapSection">
           <div class="panel-header">
             <div class="panel-header-left">
-              <span class="panel-title">${SITE_VARIANT === 'tech' ? t('panels.techMap') : SITE_VARIANT === 'happy' ? 'Good News Map' : t('panels.map')}</span>
+              <span class="panel-title">${SITE_VARIANT === 'tech' ? t('panels.techMap') : SITE_VARIANT === 'happy' ? `${t('header.happy')} ${t('panels.map')}` : t('panels.map')}</span>
             </div>
             <span class="header-clock" id="headerClock" translate="no"></span>
             <div class="map-header-actions">
@@ -1062,19 +1091,19 @@ export class PanelLayoutManager implements AppModule {
       </main>
       <nav class="mobile-tab-bar" id="mobileTabBar" aria-label="Primary">
         <button class="mobile-tab active" type="button" data-mobile-tab="today" aria-current="page">
-          <span class="mobile-tab-icon" aria-hidden="true">◉</span><span>Today</span>
+          <span class="mobile-tab-icon" aria-hidden="true">◉</span><span>${t('footer.today')}</span>
         </button>
         <button class="mobile-tab" type="button" data-mobile-tab="map">
-          <span class="mobile-tab-icon" aria-hidden="true">◎</span><span>Map</span>
+          <span class="mobile-tab-icon" aria-hidden="true">◎</span><span>${t('footer.map')}</span>
         </button>
         <button class="mobile-tab" type="button" data-mobile-tab="search">
-          <span class="mobile-tab-icon" aria-hidden="true">⌕</span><span>Search</span>
+          <span class="mobile-tab-icon" aria-hidden="true">⌕</span><span>${t('footer.search')}</span>
         </button>
         <button class="mobile-tab" type="button" data-mobile-tab="alerts">
-          <span class="mobile-tab-icon" aria-hidden="true">△</span><span>Alerts</span>
+          <span class="mobile-tab-icon" aria-hidden="true">△</span><span>${t('footer.alerts')}</span>
         </button>
         <button class="mobile-tab" type="button" data-mobile-tab="more">
-          <span class="mobile-tab-icon" aria-hidden="true">•••</span><span>More</span>
+          <span class="mobile-tab-icon" aria-hidden="true">•••</span><span>${t('footer.more')}</span>
         </button>
       </nav>
       <footer class="site-footer">
@@ -1087,10 +1116,10 @@ export class PanelLayoutManager implements AppModule {
         </div>
         <nav>
           ${referenceLinksHtml}
-          <a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">Pricing</a>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">Blog</a>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">Docs</a>
-          <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">Status</a>
+          ${SELF_HOSTED_FREE_MODE ? '' : `<a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">${t('footer.pricing')}</a>`}
+          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">${t('footer.blog')}</a>
+          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">${t('footer.docs')}</a>
+          <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">${t('footer.status')}</a>
           <a href="https://github.com/koala73/worldmonitor" target="_blank" rel="noopener">GitHub</a>
           <a href="https://discord.gg/re63kWKxaz" target="_blank" rel="noopener">Discord</a>
           <a href="https://x.com/worldmonitorai" target="_blank" rel="noopener">X</a>
@@ -1138,6 +1167,9 @@ export class PanelLayoutManager implements AppModule {
     if (!mount) return;
 
     let state = loadTabsState();
+    if (state && this.migrateTabPanelScopes(state)) {
+      saveTabsState(state);
+    }
     if (!state) {
       // First run — wrap the user's current layout in an initial tab so
       // nothing changes visually until they create a second tab.
@@ -1165,6 +1197,23 @@ export class PanelLayoutManager implements AppModule {
     });
     mount.appendChild(this.panelTabBar.getElement());
     this.updateTabCapLock();
+  }
+
+  /** Keep saved Finance tabs aligned with the same variant scope as the live
+   * settings. Older tabs can otherwise resurrect geopolitical panels after a
+   * variant switch even though the current app settings were repaired. */
+  private migrateTabPanelScopes(state: TabsState): boolean {
+    const variantDefaults = new Set(VARIANT_DEFAULTS[SITE_VARIANT] ?? []);
+    let changed = false;
+    for (const tab of state.tabs) {
+      for (const [key, config] of Object.entries(tab.panelSettings)) {
+        if (ALL_PANELS[key] && !variantDefaults.has(key) && config.enabled) {
+          tab.panelSettings[key] = { ...config, enabled: false };
+          changed = true;
+        }
+      }
+    }
+    return changed;
   }
 
   /**
@@ -1767,7 +1816,11 @@ export class PanelLayoutManager implements AppModule {
 
   private deferPanelMount(key: string, panel: Panel | null, grid: HTMLElement | null, withShell: boolean): void {
     const placeholder = withShell && grid
-      ? createDeferredPanelShell(key, this.ctx.panelSettings[key]?.name ?? key, this.getDeferredPanelShellFootprint(key))
+      ? createDeferredPanelShell(
+        key,
+        this.getLocalizedPanelName(key, this.ctx.panelSettings[key]?.name ?? key),
+        this.getDeferredPanelShellFootprint(key),
+      )
       : null;
     if (placeholder && grid) {
       this.insertByOrder(grid, placeholder, key);
@@ -2527,6 +2580,7 @@ export class PanelLayoutManager implements AppModule {
     this.wasUltraWide = effectiveUltraWide;
 
     const hasSavedOrder = savedOrder.length > 0;
+    const isFinanceMobileLayout = this.ctx.isMobile && SITE_VARIANT === 'finance';
     let allOrder: string[];
 
     if (hasSavedOrder) {
@@ -2547,12 +2601,22 @@ export class PanelLayoutManager implements AppModule {
 
       const monitorsIdx = valid.indexOf('monitors');
       if (monitorsIdx !== -1) valid.splice(monitorsIdx, 1);
-      if (SITE_VARIANT !== 'happy') valid.push('monitors');
-      allOrder = valid;
+      allOrder = isFinanceMobileLayout
+        ? [
+          ...FINANCE_MOBILE_PANEL_ORDER.filter((key) => activePanelKeys.includes(key)),
+          ...valid.filter((key) => !FINANCE_MOBILE_PANEL_ORDER.includes(key as typeof FINANCE_MOBILE_PANEL_ORDER[number])),
+        ]
+        : valid;
+      if (SITE_VARIANT !== 'happy') allOrder.push('monitors');
     } else {
-      allOrder = [...defaultOrder];
+      allOrder = isFinanceMobileLayout
+        ? [
+          ...FINANCE_MOBILE_PANEL_ORDER.filter((key) => activePanelKeys.includes(key)),
+          ...defaultOrder.filter((key) => activePanelKeys.includes(key) && !FINANCE_MOBILE_PANEL_ORDER.includes(key as typeof FINANCE_MOBILE_PANEL_ORDER[number])),
+        ]
+        : [...defaultOrder];
 
-      if (SITE_VARIANT !== 'happy') {
+      if (SITE_VARIANT !== 'happy' && !isFinanceMobileLayout) {
         const liveNewsIdx = allOrder.indexOf('live-news');
         if (liveNewsIdx > 0) {
           allOrder.splice(liveNewsIdx, 1);
@@ -2625,7 +2689,6 @@ export class PanelLayoutManager implements AppModule {
     proBadge.textContent = t('widgets.proBadge');
     proBlock.appendChild(proIcon);
     proBlock.appendChild(proLabel);
-    proBlock.appendChild(proBadge);
     proBlock.addEventListener('click', () => {
       void import('@/components/WidgetChatModal').then((m) => m.openWidgetChatModal({
         mode: 'create',
@@ -2638,6 +2701,7 @@ export class PanelLayoutManager implements AppModule {
         },
       })).catch((err) => console.error('[widget-chat] failed to lazy-load WidgetChatModal', err));
     });
+    if (!SELF_HOSTED_FREE_MODE) proBlock.appendChild(proBadge);
     panelsGrid.appendChild(proBlock);
 
     const mcpBlock = document.createElement('button');
@@ -2655,12 +2719,12 @@ export class PanelLayoutManager implements AppModule {
     mcpBadge.textContent = t('widgets.proBadge');
     mcpBlock.appendChild(mcpIcon);
     mcpBlock.appendChild(mcpLabel);
-    mcpBlock.appendChild(mcpBadge);
     mcpBlock.addEventListener('click', () => {
       void import('@/components/McpConnectModal').then((m) => m.openMcpConnectModal({
         onComplete: (spec) => this.addMcpPanel(spec),
       })).catch((err) => console.error('[mcp-connect] failed to lazy-load McpConnectModal', err));
     });
+    if (!SELF_HOSTED_FREE_MODE) mcpBlock.appendChild(mcpBadge);
     panelsGrid.appendChild(mcpBlock);
 
     // Reactively show/hide Pro-only UI blocks ("Create Interactive Widget" +

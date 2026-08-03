@@ -32,8 +32,8 @@ export class StockBacktestPanel extends Panel {
   private tableView?: WatchlistTableView<StockBacktestResult>;
 
   constructor() {
-    super({ id: 'stock-backtest', title: 'Premium Backtesting', infoTooltip: t('components.stockBacktest.infoTooltip'), premium: 'locked' });
-    this.header.appendChild(createWatchlistButton('Edit Watchlist'));
+    super({ id: 'stock-backtest', title: t('panels.stockBacktest'), infoTooltip: t('components.stockBacktest.infoTooltip'), premium: 'locked' });
+    this.header.appendChild(createWatchlistButton(t('components.stockBacktest.editWatchlist')));
   }
 
   public renderBacktests(items: StockBacktestResult[], source: 'live' | 'cached' = 'live'): void {

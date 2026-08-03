@@ -3,6 +3,7 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 
 import { enqueueSentryCall } from '@/bootstrap/sentry-defer';
 import { readQueryLanguage, stripQueryLanguage } from '@/utils/i18n-url';
+import { SITE_VARIANT } from '@/config/variant';
 
 // Keep only first-paint English strings in the entry chunk. The full English
 // dictionary is loaded through localeModules so it can split like other locales.
@@ -180,6 +181,11 @@ export async function initI18n(): Promise<void> {
     },
     cacheUserLanguage: () => { /* writes go through explicit changeLanguage() */ },
   });
+  detector.addDetector({
+    name: 'wmVariantDefault',
+    lookup: () => SITE_VARIANT === 'finance' ? 'zh' : undefined,
+    cacheUserLanguage: () => { /* the variant default is not a user choice */ },
+  });
 
   await i18next
     .use(detector)
@@ -195,7 +201,7 @@ export async function initI18n(): Promise<void> {
         escapeValue: false, // not needed for these simple strings
       },
       detection: {
-        order: ['wmQuery', 'wmExplicit', 'navigator'],
+        order: ['wmQuery', 'wmExplicit', 'wmVariantDefault', 'navigator'],
         caches: [], // never auto-write — only changeLanguage() persists
       },
     });

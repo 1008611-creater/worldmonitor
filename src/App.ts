@@ -83,6 +83,7 @@ import type { PositioningPanel } from '@/components/PositioningPanel';
 import type { GoldIntelligencePanel } from '@/components/GoldIntelligencePanel';
 import { isDesktopRuntime, waitForSidecarReady } from '@/services/runtime';
 import { hasPremiumAccess } from '@/services/panel-gating';
+import { SELF_HOSTED_FREE_MODE } from '@/config/self-hosted';
 import { BETA_MODE } from '@/config/beta';
 import { track, trackEvent, trackDeeplinkOpened, initAuthAnalytics } from '@/services/analytics';
 import { preloadCountryGeometry, isCountryGeometryLoaded, getCountryNameByCode } from '@/services/country-geometry';
@@ -853,6 +854,24 @@ export class App {
         }
         saveToStorage(STORAGE_KEYS.panels, panelSettings);
         localStorage.setItem(UNIFIED_MIGRATION_KEY, 'done');
+      }
+
+      // Repair stale same-variant workspaces created before variant-scoped
+      // panel settings were enforced. This is intentionally one-time and
+      // only disables registered panels outside the active variant; dynamic
+      // widgets and MCP panels remain user-owned.
+      const VARIANT_PANEL_SCOPE_MIGRATION_KEY = `worldmonitor-variant-panel-scope-v1:${SITE_VARIANT}`;
+      if (!localStorage.getItem(VARIANT_PANEL_SCOPE_MIGRATION_KEY)) {
+        const variantDefaults = new Set(VARIANT_DEFAULTS[SITE_VARIANT] ?? []);
+        let changed = false;
+        for (const key of Object.keys(panelSettings)) {
+          if (ALL_PANELS[key] && !variantDefaults.has(key) && panelSettings[key]?.enabled) {
+            panelSettings[key] = { ...panelSettings[key]!, enabled: false };
+            changed = true;
+          }
+        }
+        if (changed) saveToStorage(STORAGE_KEYS.panels, panelSettings);
+        localStorage.setItem(VARIANT_PANEL_SCOPE_MIGRATION_KEY, 'done');
       }
 
       // One-time migration: fix happy variant sessions that got cross-variant panels enabled
@@ -2171,6 +2190,10 @@ export class App {
    * Safe to call multiple times (idempotent) — e.g. on auth state changes.
    */
   private enforceFreeTierLimits(cloudSyncVersion?: number): boolean {
+    if (SELF_HOSTED_FREE_MODE) {
+      return this.restoreProGatedCustomWidgets(cloudSyncVersion);
+    }
+
     // ── One-time v1 cap-bug recovery ──────────────────────────────────
     // Pre-2026-05-01 the source cap was enforced by Array.sort().slice(),
     // which silently auto-disabled every source past alphabetical position

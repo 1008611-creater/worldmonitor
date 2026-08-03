@@ -17,6 +17,7 @@ import {
   getInternalMcpVerifiedNonce,
 } from './mcp-internal-hmac';
 import { validateUserApiKey } from './user-api-key';
+import { isSelfHostedFreeMode } from './self-hosted';
 
 export type PremiumCallerIdentity =
   | { isPremium: true; userId: string; kind: 'internal-mcp'; quotaExempt: true }
@@ -204,6 +205,10 @@ export async function requirePremiumRpcAccess<T extends RpcApiErrorLike>(
  * Resolves premium status and the user-bound identity for spend controls.
  */
 export async function resolvePremiumCallerIdentity(request: Request): Promise<PremiumCallerIdentity> {
+  if (isSelfHostedFreeMode()) {
+    return { isPremium: true, userId: null, kind: 'enterprise', quotaExempt: true };
+  }
+
   // Internal-MCP context: trusted markers are set by the gateway AFTER an
   // HMAC verification on `X-WM-MCP-Internal` succeeds. Inbound copies of
   // these headers are stripped at the gateway entry (defense-in-depth) so

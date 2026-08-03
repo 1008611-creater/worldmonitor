@@ -36,6 +36,7 @@ import { validateBearerToken } from '../server/auth-session';
 import { checkProEntitlement } from '../server/_shared/pro-entitlement';
 import { signBriefUrl, BriefUrlError } from '../server/_shared/brief-url';
 import { assertBriefEnvelope } from '../server/_shared/brief-render.js';
+import { isSelfHostedFreeMode } from '../server/_shared/self-hosted';
 
 // Slot format written by the digest cron. Must match ISSUE_DATE_RE in
 // server/_shared/brief-url.ts — the signer rejects anything else.
@@ -193,7 +194,9 @@ export default async function handler(
     return jsonResponse({ error: 'UNAUTHENTICATED' }, 401, cors);
   }
 
-  const proAccess = await checkProEntitlement(session.userId, session.role, cors);
+  const proAccess = isSelfHostedFreeMode()
+    ? { allowed: true as const }
+    : await checkProEntitlement(session.userId, session.role, cors);
   if (!proAccess.allowed) {
     // #5600: an entitlement the backend could not VERIFY is not a confirmed
     // free user. This is the endpoint the live repro caught rendering "Pro
