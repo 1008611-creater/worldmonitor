@@ -118,8 +118,16 @@ describe('CCFI parser (functional)', () => {
 // fail closed: published-or-derived from SSE's own envelope, never fabricated.
 
 describe('SSE period-over-period change contract (#6066)', () => {
+  // currentDate defaults to a real date because an undated observation fails the
+  // decision-grade field closed on its own (covered by its own test below).
   const parse = (line, data = {}) => parseSseIndexResponse(
-    { data: { lineDataList: [{ dataItemTypeName: 'CCFI_T', ...line }], ...data } },
+    {
+      data: {
+        currentDate: '2026-07-18',
+        lineDataList: [{ dataItemTypeName: 'CCFI_T', ...line }],
+        ...data,
+      },
+    },
     'CCFI', 'CCFI_T', 'CCFI - China Container Freight', 'index',
   )[0];
 
@@ -136,6 +144,20 @@ describe('SSE period-over-period change contract (#6066)', () => {
     assert.ok(Math.abs(index.periodChangePct - 10) < 1e-9, `got ${index.periodChangePct}`);
     assert.equal(index.periodChangeBasis, 'derived_from_prior_period_level');
     assert.equal(index.priorPeriodValue, 100);
+  });
+
+  it('keeps the derived direction correct against a negative prior level', () => {
+    // The denominator is |prior| (matching the evaluator's own percentage_change
+    // convention in shared/china-activity-nowcast.ts), so a rise off a negative
+    // prior stays a rise. Without the guard the sign inverts and a strengthening
+    // week would be reported as weakening.
+    const rising = parse({ currentContent: -50, lastContent: -100 });
+    assert.ok(rising.periodChangePct > 0, `rise off a negative prior: ${rising.periodChangePct}`);
+    assert.ok(Math.abs(rising.periodChangePct - 50) < 1e-9, `got ${rising.periodChangePct}`);
+
+    const falling = parse({ currentContent: -150, lastContent: -100 });
+    assert.ok(falling.periodChangePct < 0, `fall off a negative prior: ${falling.periodChangePct}`);
+    assert.ok(Math.abs(falling.periodChangePct + 50) < 1e-9, `got ${falling.periodChangePct}`);
   });
 
   it('keeps a published zero move directional-eligible rather than treating it as missing', () => {
@@ -166,6 +188,81 @@ describe('SSE period-over-period change contract (#6066)', () => {
       assert.equal(parse({ currentContent: 900, lastContent }).priorPeriodValue, null,
         String(lastContent));
     }
+  });
+
+  it('publishes no change when SSE does not date the observation', () => {
+    // An undated or malformed observation must not receive a synthetic date
+    // downstream, where a frozen index could clear the 28-day freshness budget.
+    for (const data of [
+      {},
+      { currentDate: '' },
+      { currentDate: 42 },
+      { currentDate: 'N/A' },
+      { currentDate: '2026-02-30' },
+      { currentDate: ' 2026-07-18' },
+    ]) {
+      const index = parseSseIndexResponse(
+        {
+          data: {
+            lineDataList: [{
+              dataItemTypeName: 'CCFI_T',
+              currentContent: 1072.16,
+              lastContent: 1054.38,
+              percentage: 1.69,
+            }],
+            ...data,
+          },
+        },
+        'CCFI', 'CCFI_T', 'CCFI - China Container Freight', 'index',
+      )[0];
+      const label = JSON.stringify(data);
+      assert.equal(index.periodChangePct, null, label);
+      assert.equal(index.periodChangeBasis, null, label);
+      assert.equal(index._observationDate, null, label);
+      // The display record still renders — only the decision-grade field fails closed.
+      assert.equal(index.currentValue, 1072.16, label);
+      assert.equal(index.changePct, 1.69, label);
+    }
+  });
+
+  it('withholds both prior-period facts when no change was proven', () => {
+    // A prior level or date with no change to attach it to describes a comparison
+    // that was never made. Each case below supplies a FINITE prior that would
+    // otherwise be published next to a null change.
+    const zeroPrior = parse({ currentContent: 900, lastContent: 0 }, { lastDate: '2026-07-11' });
+    assert.equal(zeroPrior.periodChangePct, null, 'zero prior proves no change');
+    assert.equal(zeroPrior.priorPeriodValue, null, 'zero prior is not a comparison');
+    assert.equal(zeroPrior.priorPeriodDate, null);
+
+    const undated = parseSseIndexResponse(
+      {
+        data: {
+          lastDate: '2026-07-11',
+          lineDataList: [{
+            dataItemTypeName: 'CCFI_T',
+            currentContent: 1072.16,
+            lastContent: 1054.38,
+            percentage: 1.69,
+          }],
+        },
+      },
+      'CCFI', 'CCFI_T', 'CCFI - China Container Freight', 'index',
+    )[0];
+    assert.equal(undated.periodChangePct, null, 'undated observation proves no change');
+    assert.equal(undated.priorPeriodValue, null, 'no change means no comparison to report');
+    assert.equal(undated.priorPeriodDate, null);
+
+    const noPrior = parse({ currentContent: 900 }, { lastDate: '2026-07-11' });
+    assert.equal(noPrior.periodChangePct, null);
+    assert.equal(noPrior.priorPeriodValue, null);
+    assert.equal(noPrior.priorPeriodDate, null);
+
+    const proven = parse(
+      { currentContent: 1072.16, lastContent: 1054.38, percentage: 1.69 },
+      { currentDate: '2026-07-18', lastDate: '2026-07-11' },
+    );
+    assert.equal(proven.priorPeriodValue, 1054.38);
+    assert.equal(proven.priorPeriodDate, '2026-07-11');
   });
 });
 
@@ -356,6 +453,28 @@ describe('History accumulation (functional)', () => {
     assert.equal(result[0].history[1].value, 1710);
   });
 
+  it('seeds a first history point only when the observation is dated', () => {
+    const dated = accumulateHistory([{
+      indexId: 'CCFI', currentValue: 1710, history: [], _observationDate: '2026-03-13',
+    }], null);
+    assert.deepEqual(dated[0].history, [{ date: '2026-03-13', value: 1710 }]);
+
+    const undated = accumulateHistory([{
+      indexId: 'CCFI', currentValue: 1710, history: [], _observationDate: null,
+    }], null);
+    assert.deepEqual(undated[0].history, []);
+  });
+
+  it('preserves existing history without appending an undated observation', () => {
+    const existingHistory = [{ date: '2026-03-06', value: 1690 }];
+    const result = accumulateHistory([{
+      indexId: 'CCFI', currentValue: 1710, history: [], _observationDate: null,
+    }], { indices: [{ indexId: 'CCFI', history: existingHistory }] });
+
+    assert.deepEqual(result[0].history, existingHistory);
+    assert.equal(result[0]._observationDate, undefined);
+  });
+
   it('strips _observationDate from output', () => {
     const prevPayload = { indices: [{ indexId: 'BDI', history: [] }] };
     const newIndices = [{ indexId: 'BDI', currentValue: 2000, history: [], _observationDate: '2026-03-14' }];
@@ -376,11 +495,13 @@ describe('History accumulation (functional)', () => {
   it('handles null/empty previous payload and strips _observationDate', () => {
     const newIndices = [{ indexId: 'BDI', currentValue: 1900, history: [], _observationDate: '2026-03-14' }];
     const result1 = accumulateHistory(newIndices, null);
-    assert.equal(result1[0].history.length, 0, 'Null payload: history stays empty');
+    assert.deepEqual(result1[0].history, [{ date: '2026-03-14', value: 1900 }],
+      'Null payload: the first dated observation seeds history');
     assert.equal(result1[0]._observationDate, undefined, '_observationDate stripped on null payload');
 
     const result2 = accumulateHistory([{ indexId: 'BDI', currentValue: 1900, history: [], _observationDate: '2026-03-14' }], { indices: [] });
-    assert.equal(result2[0].history.length, 0, 'Empty indices: history stays empty');
+    assert.deepEqual(result2[0].history, [{ date: '2026-03-14', value: 1900 }],
+      'Empty indices: the first dated observation seeds history');
   });
 
   it('merges history for new index not in previous payload', () => {
