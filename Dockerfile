@@ -17,6 +17,7 @@ WORKDIR /app
 # not silently fall back to the public full-site defaults.
 ENV VITE_VARIANT=finance
 ENV VITE_LOCAL_FREE_MODE=true
+ENV VITE_CLOUD_PREFS_ENABLED=true
 
 # Install root dependencies (layer-cached until package.json changes)
 COPY package.json package-lock.json ./
