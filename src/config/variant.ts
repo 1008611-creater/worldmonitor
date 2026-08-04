@@ -37,5 +37,9 @@ export const SITE_VARIANT: string = (() => {
     return buildVariant;
   }
 
+  // Custom deployments such as app.cauai.fun do not carry a standard
+  // variant subdomain. Respect an explicit non-full build in that case.
+  if (buildVariant !== 'full') return buildVariant;
+
   return 'full';
 })();
