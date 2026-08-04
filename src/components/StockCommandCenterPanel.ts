@@ -44,6 +44,7 @@ export class StockCommandCenterPanel extends Panel {
   private latestMarkets: MarketData[] = [];
   private previousQuotes = new Map<string, { price: number | null; change: number | null }>();
   private alertStatus = '';
+  private notificationRequestInFlight = false;
 
   constructor() {
     super({
@@ -122,7 +123,7 @@ export class StockCommandCenterPanel extends Panel {
           </div>
           <form class="stock-command-center__search" data-stock-command-search>
             <label class="wm-visually-hidden" for="stockCommandSymbol">输入股票代码</label>
-            <input id="stockCommandSymbol" name="symbol" autocomplete="off" maxlength="20" placeholder="输入代码，如 NVDA" />
+            <input id="stockCommandSymbol" name="symbol" autocomplete="off" maxlength="20" aria-label="输入股票代码" placeholder="输入代码，如 NVDA" />
             <button type="submit">加入自选</button>
           </form>
         </div>
@@ -157,7 +158,7 @@ export class StockCommandCenterPanel extends Panel {
         <div class="stock-command-center__actions">
           <button type="button" data-stock-panel="stock-analysis">打开股票分析</button>
           <button type="button" data-stock-panel="earnings-calendar">查看财报日历</button>
-          <button type="button" data-stock-alert-request>启用浏览器通知</button>
+          <button type="button" data-stock-alert-request ${this.notificationRequestInFlight ? 'disabled' : ''}>${this.notificationRequestInFlight ? '请求通知权限…' : '启用浏览器通知'}</button>
         </div>
         <div class="stock-command-center__status" data-stock-command-status role="status" aria-live="polite">${escapeHtml(this.alertStatus)}</div>
       </div>`;
@@ -201,7 +202,7 @@ export class StockCommandCenterPanel extends Panel {
       button.addEventListener('click', () => this.revealPanel('stock-analysis'));
     });
     this.content.querySelectorAll<HTMLButtonElement>('[data-stock-alert]').forEach((button) => {
-      button.addEventListener('click', () => this.openAlertEditor(button.dataset.stockAlert || ''));
+      button.addEventListener('click', () => this.openAlertEditor(button.dataset.stockAlert || '', button));
     });
     this.content.querySelector<HTMLButtonElement>('[data-stock-alert-request]')?.addEventListener('click', () => {
       void this.requestBrowserNotification();
@@ -214,38 +215,112 @@ export class StockCommandCenterPanel extends Panel {
   }
 
   private async requestBrowserNotification(): Promise<void> {
+    if (this.notificationRequestInFlight) return;
+    this.notificationRequestInFlight = true;
+    this.alertStatus = '正在请求浏览器通知权限…';
+    this.renderMarkets(this.latestMarkets);
     if (typeof Notification === 'undefined') {
       this.alertStatus = '当前浏览器不支持通知';
+      this.notificationRequestInFlight = false;
       this.renderMarkets(this.latestMarkets);
       return;
     }
-    const permission = await Notification.requestPermission();
-    this.alertStatus = permission === 'granted' ? '浏览器通知已启用' : '通知权限未开启，页面内提醒仍会显示';
-    this.renderMarkets(this.latestMarkets);
+    try {
+      const permission = await Notification.requestPermission();
+      this.alertStatus = permission === 'granted' ? '浏览器通知已启用' : '通知权限未开启，页面内提醒仍会显示';
+    } catch {
+      this.alertStatus = '通知权限请求失败，页面内提醒仍会显示';
+    } finally {
+      this.notificationRequestInFlight = false;
+      this.renderMarkets(this.latestMarkets);
+    }
   }
 
-  private openAlertEditor(symbol: string): void {
+  private openAlertEditor(symbol: string, trigger?: HTMLButtonElement): void {
     const normalized = normalizeSymbol(symbol);
     if (!normalized) return;
     if (document.querySelector('.stock-alert-modal')) return;
     const existing = getStockPriceAlert(normalized);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay active';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'stock-alert-title');
+    overlay.setAttribute('aria-describedby', 'stock-alert-form-hint');
     const current = this.latestMarkets.find((item) => normalizeSymbol(item.symbol) === normalized);
-    const close = () => overlay.remove();
+    const previouslyFocused = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    let closed = false;
+    const restoreFocus = () => {
+      queueMicrotask(() => {
+        if (previouslyFocused && document.contains(previouslyFocused)) {
+          previouslyFocused.focus();
+          return;
+        }
+        this.content.querySelector<HTMLButtonElement>(`[data-stock-alert="${CSS.escape(normalized)}"]`)?.focus();
+      });
+    };
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener('keydown', onKeydown, true);
+      overlay.remove();
+      restoreFocus();
+    };
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...overlay.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      )];
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      if (!focusable.includes(active as HTMLElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
     setTrustedHtml(overlay, trustedHtml(`
       <div class="modal stock-alert-modal">
-        <div class="modal-header"><span class="modal-title">${escapeHtml(normalized)} 价格提醒</span><button class="modal-close" type="button" aria-label="关闭">×</button></div>
-        <form class="stock-alert-form">
+        <div class="modal-header"><h2 id="stock-alert-title" class="modal-title">${escapeHtml(normalized)} 价格提醒</h2><button class="modal-close" type="button" aria-label="关闭">×</button></div>
+        <form class="stock-alert-form" novalidate>
           <div class="stock-alert-form__quote">当前价格：${escapeHtml(formatPrice(current?.price ?? null))}</div>
-          <label>价格高于<input name="above" type="number" min="0" step="any" value="${existing?.above ?? ''}" placeholder="例如 200"></label>
-          <label>价格低于<input name="below" type="number" min="0" step="any" value="${existing?.below ?? ''}" placeholder="例如 150"></label>
-          <label>日内涨跌幅达到（%）<input name="changePercent" type="number" min="0" step="0.1" value="${existing?.changePercent ?? ''}" placeholder="例如 5"></label>
+          <div class="stock-alert-form__error" data-stock-alert-error role="alert" aria-live="assertive"></div>
+          <label for="stockAlertAbove">价格高于<input id="stockAlertAbove" name="above" type="number" min="0" step="any" value="${existing?.above ?? ''}" placeholder="例如 200" inputmode="decimal" aria-describedby="stock-alert-form-hint"></label>
+          <label for="stockAlertBelow">价格低于<input id="stockAlertBelow" name="below" type="number" min="0" step="any" value="${existing?.below ?? ''}" placeholder="例如 150" inputmode="decimal" aria-describedby="stock-alert-form-hint"></label>
+          <label for="stockAlertChange">日内涨跌幅达到（%）<input id="stockAlertChange" name="changePercent" type="number" min="0" step="0.1" value="${existing?.changePercent ?? ''}" placeholder="例如 5" inputmode="decimal" aria-describedby="stock-alert-form-hint"></label>
           <div class="stock-alert-form__actions"><button type="button" data-stock-alert-remove>删除提醒</button><button type="button" data-stock-alert-cancel>取消</button><button type="submit">保存提醒</button></div>
-          <div class="stock-alert-form__hint">行情刷新时检查条件；关闭页面后不主动推送。</div>
+          <div id="stock-alert-form-hint" class="stock-alert-form__hint">行情刷新时检查条件；关闭页面后不主动推送。</div>
         </form>
       </div>`, 'stock price alert editor markup'));
+    const form = overlay.querySelector<HTMLFormElement>('form');
+    const error = overlay.querySelector<HTMLElement>('[data-stock-alert-error]');
+    const inputs = ['above', 'below', 'changePercent']
+      .map((name) => form?.elements.namedItem(name))
+      .filter((input): input is HTMLInputElement => input instanceof HTMLInputElement);
+    const clearValidation = () => {
+      if (error) error.textContent = '';
+      inputs.forEach((input) => input.removeAttribute('aria-invalid'));
+    };
+    const showValidationError = (message: string, invalidInputs: HTMLInputElement[]) => {
+      if (error) error.textContent = message;
+      invalidInputs.forEach((input) => input.setAttribute('aria-invalid', 'true'));
+      invalidInputs[0]?.focus();
+    };
+    inputs.forEach((input) => input.addEventListener('input', clearValidation));
     overlay.querySelector<HTMLButtonElement>('.modal-close')?.addEventListener('click', close);
     overlay.querySelector<HTMLButtonElement>('[data-stock-alert-cancel]')?.addEventListener('click', close);
     overlay.querySelector<HTMLButtonElement>('[data-stock-alert-remove]')?.addEventListener('click', () => {
@@ -254,24 +329,37 @@ export class StockCommandCenterPanel extends Panel {
       close();
       this.renderMarkets(this.latestMarkets);
     });
-    overlay.querySelector('form')?.addEventListener('submit', (event) => {
+    form?.addEventListener('submit', (event) => {
       event.preventDefault();
-      const form = event.currentTarget as HTMLFormElement;
-      const value = (name: string): number | undefined => {
-        const raw = (form.elements.namedItem(name) as HTMLInputElement | null)?.value.trim();
-        if (!raw) return undefined;
+      clearValidation();
+      const readValue = (name: string): { value?: number; invalid: boolean; input: HTMLInputElement | null } => {
+        const input = form.elements.namedItem(name) as HTMLInputElement | null;
+        const raw = input?.value.trim() ?? '';
+        if (!raw) return { invalid: false, input };
         const parsed = Number(raw);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+        return { value: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined, invalid: !Number.isFinite(parsed) || parsed <= 0, input };
       };
+      const aboveResult = readValue('above');
+      const belowResult = readValue('below');
+      const changeResult = readValue('changePercent');
+      const invalidInputs = [aboveResult, belowResult, changeResult].filter((result) => result.invalid).map((result) => result.input).filter((input): input is HTMLInputElement => input !== null);
+      if (invalidInputs.length > 0) {
+        showValidationError('提醒条件必须是大于 0 的数字，请检查输入。', invalidInputs);
+        return;
+      }
+      if (aboveResult.value !== undefined && belowResult.value !== undefined && aboveResult.value <= belowResult.value) {
+        showValidationError('“价格高于”必须大于“价格低于”。', [aboveResult.input, belowResult.input].filter((input): input is HTMLInputElement => input !== null));
+        return;
+      }
       const alert: StockPriceAlert = { symbol: normalized, enabled: true };
-      const above = value('above');
-      const below = value('below');
-      const changePercent = value('changePercent');
+      const above = aboveResult.value;
+      const below = belowResult.value;
+      const changePercent = changeResult.value;
       if (above !== undefined) alert.above = above;
       if (below !== undefined) alert.below = below;
       if (changePercent !== undefined) alert.changePercent = changePercent;
       if (above === undefined && below === undefined && changePercent === undefined) {
-        this.alertStatus = '至少填写一个提醒条件';
+        showValidationError('至少填写一个提醒条件，再保存提醒。', [inputs[0]!]);
         return;
       }
       setStockPriceAlert(alert);
@@ -280,6 +368,8 @@ export class StockCommandCenterPanel extends Panel {
       this.renderMarkets(this.latestMarkets);
     });
     document.body.appendChild(overlay);
+    document.addEventListener('keydown', onKeydown, true);
+    requestAnimationFrame(() => overlay.querySelector<HTMLInputElement>('#stockAlertAbove')?.focus());
   }
 
   private revealPanel(panelId: string): void {

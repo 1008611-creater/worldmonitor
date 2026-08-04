@@ -327,6 +327,22 @@
   line-height: 1.4;
 }
 
+.stock-alert-form__error {
+  min-height: 16px;
+  color: var(--semantic-critical);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.stock-alert-form input[aria-invalid="true"] {
+  border-color: var(--semantic-critical);
+}
+
+.stock-alert-modal :is(button, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .stock-alert-form__actions {
   display: flex;
   flex-wrap: wrap;
@@ -361,8 +377,53 @@
 
 @media (max-width: 620px) {
   .stock-command-center__topline { flex-direction: column; }
-  .stock-command-center__search { width: 100%; min-width: 0; }
+  .stock-command-center__search { width: 100%; min-width: 0; flex: 0 1 auto; }
   .stock-command-center__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .stock-command-center__search input,
+  .stock-command-center__search button,
+  .stock-command-center__actions button,
+  .stock-command-card__action,
+  .stock-command-card__alert {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .stock-command-center__search button,
+  .stock-command-center__actions button,
+  .stock-command-card__action,
+  .stock-command-card__alert {
+    padding: 10px 12px;
+  }
+
+  .stock-command-center__actions { gap: 8px; }
+  .stock-alert-modal {
+    width: min(420px, calc(100vw - 20px));
+    max-height: calc(100dvh - 20px);
+    margin: 10px;
+  }
+  .stock-alert-modal .modal-close { min-width: 44px; min-height: 44px; padding: 8px; }
+  .stock-alert-form { gap: 12px; padding: 16px; }
+  .stock-alert-form input { min-height: 44px; padding: 10px 11px; }
+  .stock-alert-form__actions { gap: 8px; }
+  .stock-alert-form__actions button { min-height: 44px; padding: 10px 12px; touch-action: manipulation; }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .stock-command-center__search input,
+  .stock-command-center__search button,
+  .stock-command-center__actions button,
+  .stock-command-card__action,
+  .stock-command-card__alert {
+    min-height: 44px;
+    padding: 10px 12px;
+    touch-action: manipulation;
+  }
+
+  .stock-alert-modal .modal-close { min-width: 44px; min-height: 44px; padding: 8px; }
+  .stock-alert-form input { min-height: 44px; padding: 10px 11px; }
+  .stock-alert-form__actions { gap: 8px; }
+  .stock-alert-form__actions button { min-height: 44px; padding: 10px 12px; touch-action: manipulation; }
 }
 
 /* ----------------------------------------------------------
