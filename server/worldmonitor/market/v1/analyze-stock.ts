@@ -890,7 +890,7 @@ async function fetchFmpHistory(symbol: string): Promise<{ candles: Candle[]; cur
   const end = new Date();
   const start = new Date(end.getTime() - 220 * 24 * 60 * 60 * 1_000);
   const formatDate = (date: Date) => date.toISOString().slice(0, 10);
-  const url = `https://financialmodelingprep.com/stable/historical-price-eod/light?symbol=${encodeURIComponent(symbol)}&from=${formatDate(start)}&to=${formatDate(end)}&apikey=${encodeURIComponent(apiKey)}`;
+  const url = `https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=${encodeURIComponent(symbol)}&from=${formatDate(start)}&to=${formatDate(end)}&apikey=${encodeURIComponent(apiKey)}`;
 
   try {
     const response = await fetch(url, {
