@@ -227,6 +227,7 @@ export class StockCommandCenterPanel extends Panel {
   private openAlertEditor(symbol: string): void {
     const normalized = normalizeSymbol(symbol);
     if (!normalized) return;
+    if (document.querySelector('.stock-alert-modal')) return;
     const existing = getStockPriceAlert(normalized);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay active';
