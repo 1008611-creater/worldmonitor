@@ -96,6 +96,7 @@ const MAX_CONCURRENT_UPSTREAM = 6;
 // Mutable (not const) only so tests can shrink it -- production always runs
 // at the default.
 let _upstreamIdleTimeoutMs = 12000;
+const LLM_UPSTREAM_IDLE_TIMEOUT_MS = 100000;
 function acquireUpstreamSlot() {
   if (_activeUpstream < MAX_CONCURRENT_UPSTREAM) {
     _activeUpstream++;
@@ -278,7 +279,18 @@ globalThis.fetch = async function ipv4Fetch(input, init) {
       // Catches a peer that accepts the connection and then goes silent
       // forever (no error, no close, no data) -- the only stall shape none
       // of the listeners above ever observe.
-      req.setTimeout(_upstreamIdleTimeoutMs, () => {
+      let requestIdleTimeoutMs = _upstreamIdleTimeoutMs;
+      const configuredLlmUrl = typeof process !== 'undefined' ? process.env.LLM_API_URL : '';
+      if (configuredLlmUrl) {
+        try {
+          if (new URL(configuredLlmUrl).origin === url.origin) {
+            requestIdleTimeoutMs = Math.max(requestIdleTimeoutMs, LLM_UPSTREAM_IDLE_TIMEOUT_MS);
+          }
+        } catch {
+          // Keep the normal timeout when the optional LLM URL is malformed.
+        }
+      }
+      req.setTimeout(requestIdleTimeoutMs, () => {
         req.destroy();
         settle(reject, new Error('upstream request idle-timed out'));
       });
