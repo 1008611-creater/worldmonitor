@@ -142,6 +142,7 @@ import type { ChinaCorporateDisclosureSnapshot } from '@/components/market-discl
 import { mountCommunityWidget } from '@/components/CommunityWidget';
 
 import type { StockAnalysisPanel } from '@/components/StockAnalysisPanel';
+import type { StockCommandCenterPanel } from '@/components/StockCommandCenterPanel';
 import type { StockBacktestPanel } from '@/components/StockBacktestPanel';
 import type { PredictionPanel } from '@/components/PredictionPanel';
 import type { MonitorPanel } from '@/components/MonitorPanel';
@@ -2207,6 +2208,7 @@ export class DataLoaderManager implements AppModule {
       const hydratedMarkets = getHydratedData('marketQuotes') as ListMarketQuotesResponse | undefined;
       let stocksResult: Awaited<ReturnType<typeof fetchMultipleStocks>>;
       const marketsPanel = this.ctx.panels['markets'] as MarketPanel | undefined;
+      const commandCenterPanel = this.ctx.panels['stock-command-center'] as StockCommandCenterPanel | undefined;
       const hydratedDisclosures = getHydratedData('chinaCorporateDisclosures') as
         ChinaCorporateDisclosureSnapshot | undefined;
       if (hydratedDisclosures !== undefined) {
@@ -2225,16 +2227,19 @@ export class DataLoaderManager implements AppModule {
         }));
         this.ctx.latestMarkets = data;
         marketsPanel?.renderMarkets(data);
+        commandCenterPanel?.renderMarkets(data);
         stocksResult = { data, skipped: hydratedMarkets.finnhubSkipped || undefined, rateLimited: hydratedMarkets.rateLimited || undefined };
       } else {
         stocksResult = await fetchMultipleStocks(effectiveSymbols, {
           onBatch: (partialStocks) => {
             this.ctx.latestMarkets = partialStocks;
             marketsPanel?.renderMarkets(partialStocks);
+            commandCenterPanel?.renderMarkets(partialStocks);
           },
         });
         this.ctx.latestMarkets = stocksResult.data;
         marketsPanel?.renderMarkets(stocksResult.data, stocksResult.rateLimited);
+        commandCenterPanel?.renderMarkets(stocksResult.data);
       }
 
       const finnhubConfigMsg = 'FINNHUB_API_KEY not configured — add in Settings';

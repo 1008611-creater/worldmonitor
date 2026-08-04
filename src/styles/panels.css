@@ -84,6 +84,205 @@
 }
 
 /* ----------------------------------------------------------
+   Finance Stock Command Center
+   ---------------------------------------------------------- */
+.stock-command-center {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stock-command-center__topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stock-command-center__eyebrow {
+  color: var(--text-dim);
+  font: 700 10px/1.2 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.stock-command-center__title {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.stock-command-center__hint {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.stock-command-center__search {
+  display: flex;
+  align-items: stretch;
+  flex: 0 1 320px;
+  min-width: 220px;
+}
+
+.stock-command-center__search input {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-right: 0;
+  font: 12px/1.2 var(--font-body);
+}
+
+.stock-command-center__search input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.stock-command-center__search button,
+.stock-command-center__actions button,
+.stock-command-card__action {
+  min-height: 32px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font: 600 11px/1.2 var(--font-body);
+  cursor: pointer;
+}
+
+.stock-command-center__search button:hover,
+.stock-command-center__actions button:hover,
+.stock-command-card__action:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.stock-command-center__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stock-command-center__stats > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--overlay-subtle);
+  border: 1px solid var(--border);
+}
+
+.stock-command-center__stats span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.stock-command-center__stats strong {
+  overflow: hidden;
+  color: var(--text);
+  font: 600 12px/1.25 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-command-center__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stock-command-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 8px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 9px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.stock-command-card__identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stock-command-card__identity strong {
+  overflow: hidden;
+  color: var(--text);
+  font: 700 12px/1.2 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-command-card__identity span {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-command-card__quote {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 64px;
+}
+
+.stock-command-card__quote strong {
+  color: var(--text);
+  font: 600 12px/1.2 var(--font-mono);
+}
+
+.stock-command-card__change {
+  font: 600 10px/1.2 var(--font-mono);
+}
+
+.stock-command-card__change--positive { color: var(--semantic-normal); }
+.stock-command-card__change--negative { color: var(--semantic-critical); }
+
+.stock-command-card__action {
+  grid-column: 1 / -1;
+  min-height: 26px;
+  padding: 4px 8px;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.stock-command-center__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.stock-command-center__status {
+  min-height: 16px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .stock-command-center__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .stock-command-center__topline { flex-direction: column; }
+  .stock-command-center__search { width: 100%; min-width: 0; }
+  .stock-command-center__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ----------------------------------------------------------
    China Intelligence Panels
    Keep the China surfaces on the same compact, source-led rhythm
    as the rest of the dashboard. The panels still expose their

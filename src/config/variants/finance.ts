@@ -142,6 +142,7 @@ export const FEEDS: Record<string, Feed[]> = {
 // Panel configuration for finance/trading
 export const DEFAULT_PANELS: Record<string, PanelConfig> = {
   map: { name: 'Global Markets Map', enabled: true, priority: 1 },
+  'stock-command-center': { name: '股票工作台', enabled: true, priority: 0 },
   'live-news': { name: 'Market Headlines', enabled: true, priority: 1 },
   insights: { name: 'AI Market Insights', enabled: true, priority: 1 },
   markets: { name: 'Live Markets', enabled: true, priority: 1 },
