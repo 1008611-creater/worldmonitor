@@ -830,7 +830,7 @@ export async function fetchExtendedHoursQuote(
   }
 }
 
-export async function fetchYahooHistory(symbol: string): Promise<{ candles: Candle[]; currency: string } | null> {
+async function fetchYahooHistoryFromYahoo(symbol: string): Promise<{ candles: Candle[]; currency: string } | null> {
   await yahooGate();
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d&includePrePost=true&events=div,splits`;
   const response = await fetch(url, {
@@ -872,6 +872,74 @@ export async function fetchYahooHistory(symbol: string): Promise<{ candles: Cand
 
   if (candles.length < 30) return null;
   return { candles, currency: result?.meta?.currency || 'USD' };
+}
+
+type FmpHistoricalPrice = {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+};
+
+async function fetchFmpHistory(symbol: string): Promise<{ candles: Candle[]; currency: string } | null> {
+  const apiKey = process.env.FMP_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const end = new Date();
+  const start = new Date(end.getTime() - 220 * 24 * 60 * 60 * 1_000);
+  const formatDate = (date: Date) => date.toISOString().slice(0, 10);
+  const url = `https://financialmodelingprep.com/stable/historical-price-eod/light?symbol=${encodeURIComponent(symbol)}&from=${formatDate(start)}&to=${formatDate(end)}&apikey=${encodeURIComponent(apiKey)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+
+    const data = await response.json() as unknown;
+    if (!Array.isArray(data)) return null;
+
+    const candles = data
+      .map((item): Candle | null => {
+        if (!item || typeof item !== 'object') return null;
+        const row = item as FmpHistoricalPrice;
+        const timestamp = row.date ? Date.parse(row.date) : Number.NaN;
+        const values = [row.open, row.high, row.low, row.close];
+        if (!Number.isFinite(timestamp) || !values.every((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)) {
+          return null;
+        }
+        const [open, high, low, close] = values as number[];
+        if (high < Math.max(open, close, low) || low > Math.min(open, close, high)) return null;
+        return {
+          timestamp,
+          open,
+          high,
+          low,
+          close,
+          volume: typeof row.volume === 'number' && Number.isFinite(row.volume) ? row.volume : 0,
+        };
+      })
+      .filter((candle): candle is Candle => candle !== null)
+      .sort((left, right) => left.timestamp - right.timestamp);
+
+    if (candles.length < 30) return null;
+    return { candles, currency: 'USD' };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchYahooHistory(symbol: string): Promise<{ candles: Candle[]; currency: string } | null> {
+  try {
+    const yahoo = await fetchYahooHistoryFromYahoo(symbol);
+    if (yahoo) return yahoo;
+  } catch {
+    // Fall through to the configured server-side historical-data provider.
+  }
+  return fetchFmpHistory(symbol);
 }
 
 function safeRaw(field: { raw?: number } | undefined): number {

@@ -232,7 +232,9 @@ export async function fetchFinnhubQuote(
 // ========================================================================
 // Yahoo Finance quote fetcher
 // ========================================================================
-// TODO: Add Financial Modeling Prep (FMP) as Yahoo Finance fallback.
+// Financial Modeling Prep (FMP) is used as the historical-analysis fallback
+// in analyze-stock.ts when Yahoo Finance is unavailable. Keep quote bootstrap
+// behavior unchanged here because the relay owns live market refreshes.
 //
 // FMP API docs: https://site.financialmodelingprep.com/developer/docs
 // Auth: API key required — env var FMP_API_KEY
