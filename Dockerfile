@@ -12,6 +12,12 @@ FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432
 
 WORKDIR /app
 
+# This deployment is the finance-focused self-hosted product. Keep the
+# variant and local-free flags explicit so a plain Docker/Railway build does
+# not silently fall back to the public full-site defaults.
+ENV VITE_VARIANT=finance
+ENV VITE_LOCAL_FREE_MODE=true
+
 # Install root dependencies (layer-cached until package.json changes)
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -51,6 +57,8 @@ RUN apk add --no-cache nginx supervisor gettext && \
     addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
+
+ENV WORLDMONITOR_LOCAL_FREE_MODE=true
 
 # API server
 COPY --from=builder /app/src-tauri/sidecar/local-api-server.mjs ./local-api-server.mjs
